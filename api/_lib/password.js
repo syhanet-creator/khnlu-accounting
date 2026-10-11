@@ -45,4 +45,17 @@ function passwordPolicyError(password, loginId) {
   return null;
 }
 
-module.exports = { hashPassword, verifyPassword, dummyVerify, passwordPolicyError };
+// 관리자가 계정을 발급/초기화할 때 쓰는 임시 비밀번호(12자, 헷갈리는 글자 I l O 0 1 제외). 첫 로그인 때 변경이 강제된다.
+function generateTempPassword(loginId) {
+  const upper = "ABCDEFGHJKLMNPQRSTUVWXYZ", lower = "abcdefghijkmnopqrstuvwxyz", digit = "23456789";
+  const all = upper + lower + digit;
+  for (;;) {
+    const chars = [upper, lower, digit].map(set => set[crypto.randomInt(set.length)]);
+    while (chars.length < 12) chars.push(all[crypto.randomInt(all.length)]);
+    for (let i = chars.length - 1; i > 0; i--) { const j = crypto.randomInt(i + 1); [chars[i], chars[j]] = [chars[j], chars[i]]; }
+    const pw = chars.join("");
+    if (!passwordPolicyError(pw, loginId)) return pw;
+  }
+}
+
+module.exports = { hashPassword, verifyPassword, dummyVerify, passwordPolicyError, generateTempPassword };

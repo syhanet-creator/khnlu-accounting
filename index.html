@@ -1278,6 +1278,7 @@ function Icon({ name, size = 18, className = "" }) {
     alert: "M12 9v4m0 4h.01M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z",
     attach: "M21.44 11.05l-8.49 8.49a5.5 5.5 0 01-7.78-7.78l9.19-9.19a3.5 3.5 0 014.95 4.95l-9.2 9.19a1.5 1.5 0 01-2.12-2.12l8.49-8.49",
     file: "M6 2h9l5 5v15H6V2zm9 0v5h5",
+    users: "M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2M9 11a4 4 0 100-8 4 4 0 000 8zM23 21v-2a4 4 0 00-3-3.87M16 3.13a4 4 0 010 7.75",
   };
   return React.createElement("svg", {
     width: size, height: size, viewBox: "0 0 24 24", fill: "none",
@@ -2953,10 +2954,284 @@ function PasswordForm({ onDone, onCancel }) {
   );
 }
 
-// 시스템관리자는 조직 데이터를 볼 수 없다(조직·계정 관리 전용). 관리 화면은 다음 단계에서 추가된다.
+const fmtWhen = s => s ? new Date(s).toLocaleString("ko-KR", { dateStyle: "short", timeStyle: "short" }) : "-";
+const ORG_ROLE_OPTIONS = [
+  { value: "admin", label: "조직관리자" }, { value: "accountant", label: "회계담당" },
+  { value: "approver", label: "결재자" }, { value: "viewer", label: "조회전용" },
+];
+const ROLE_HINTS = "조직관리자: 계정·설정·마감 / 회계담당: 전표 작성·수정 / 결재자: 지정한 결재 단계 승인 / 조회전용: 보기만";
+
+// 임시 비밀번호는 발급/초기화한 직후 이 창에서만 보여준다(서버에는 해시만 저장되어 다시 볼 수 없음).
+// 실수로 닫히지 않도록 바깥 영역 클릭으로는 닫히지 않는다.
+function TempPasswordDialog({ info, onClose }) {
+  const [copied, setCopied] = useState(false);
+  if (!info) return null;
+  async function copy() {
+    try { await navigator.clipboard.writeText(info.tempPassword); setCopied(true); } catch (e) { setCopied(false); alert("복사하지 못했습니다. 직접 선택해서 복사해 주세요."); }
+  }
+  const mono = { fontFamily: "Consolas, 'SF Mono', monospace", fontSize: 18, letterSpacing: 1, userSelect: "all" };
+  return React.createElement("div", { className: "kmodal-overlay" },
+    React.createElement("div", { className: "kmodal" },
+      React.createElement("div", { className: "kmodal-head" }, React.createElement("h3", null, info.title)),
+      React.createElement("div", { className: "kmodal-body" },
+        React.createElement("p", { className: "note-text" }, "임시 비밀번호는 지금 한 번만 보여줍니다. 닫으면 다시 볼 수 없으니 본인에게 안전하게 전달하세요. 본인은 첫 로그인 때 새 비밀번호로 바꾸게 됩니다."),
+        React.createElement("div", { style: { margin: "6px 0 14px" } },
+          React.createElement("div", { style: { color: "var(--ink-soft)", fontSize: 12 } }, "아이디"),
+          React.createElement("div", { style: { ...mono, fontSize: 16 } }, info.loginId),
+          React.createElement("div", { style: { color: "var(--ink-soft)", fontSize: 12, marginTop: 10 } }, "임시 비밀번호"),
+          React.createElement("div", { style: mono }, info.tempPassword)
+        ),
+        React.createElement("div", { style: { display: "flex", gap: 8, justifyContent: "flex-end" } },
+          React.createElement(Btn, { onClick: copy }, copied ? "복사됨" : "비밀번호 복사"),
+          React.createElement(Btn, { variant: "primary", onClick: onClose }, "확인했습니다")
+        )
+      )
+    )
+  );
+}
+
+function UserFormModal({ mode, user, org, scope, isSelf, onClose, onSaved }) {
+  const editing = mode === "edit";
+  const [loginId, setLoginId] = useState("");
+  const [displayName, setDisplayName] = useState(editing ? user.displayName : "");
+  const [role, setRole] = useState(editing ? user.role : (scope === "super" ? "admin" : "accountant"));
+  const [step, setStep] = useState(editing ? (user.approvalStep || "") : "");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  const steps = (org && org.approvalSteps) || [];
+  const roleLocked = scope === "super" || (editing && isSelf);
+
+  async function submit() {
+    if (busy) return;
+    setBusy(true); setError("");
+    try {
+      const extra = scope === "super" ? { orgId: org.id } : {};
+      if (editing) {
+        const patch = { id: user.id, displayName: displayName.trim() };
+        if (!roleLocked) { patch.role = role; patch.approvalStep = role === "approver" ? step : null; }
+        await apiCall("admin/user_update", { method: "POST", body: { ...extra, ...patch } });
+        onSaved(null);
+      } else {
+        const r = await apiCall("admin/user_create", { method: "POST", body: { ...extra, loginId: loginId.trim(), displayName: displayName.trim(), role, approvalStep: role === "approver" ? step : null } });
+        onSaved({ title: "계정이 만들어졌습니다", loginId: r.loginId, tempPassword: r.tempPassword });
+      }
+    } catch (e) {
+      setError(e.message);
+    } finally {
+      setBusy(false);
+    }
+  }
+  const ok = displayName.trim() && (editing || loginId.trim()) && (role !== "approver" || step);
+
+  return React.createElement(Modal, { open: true, onClose, title: editing ? `계정 수정 - ${user.loginId}` : (scope === "super" ? "조직 관리자 계정 추가" : "계정 만들기") },
+    React.createElement("form", { onSubmit: e => { e.preventDefault(); if (ok) submit(); } },
+      !editing && React.createElement(Field, { label: "아이디", required: true, hint: "영문·숫자·. _ - 3~50자" },
+        React.createElement("input", { className: "kinput", value: loginId, onChange: e => setLoginId(e.target.value), maxLength: 50, autoFocus: true, autoComplete: "off" })
+      ),
+      React.createElement(Field, { label: "이름", required: true },
+        React.createElement("input", { className: "kinput", value: displayName, onChange: e => setDisplayName(e.target.value), maxLength: 50, autoComplete: "off" })
+      ),
+      scope !== "super" && React.createElement(Field, { label: "역할", required: true, hint: roleLocked ? "본인의 역할은 바꿀 수 없습니다." : ROLE_HINTS },
+        React.createElement(Select, { value: role, onChange: setRole, options: ORG_ROLE_OPTIONS })
+      ),
+      role === "approver" && !roleLocked && React.createElement(Field, { label: "결재 단계", required: true, hint: "이 계정이 승인할 수 있는 결재선 단계입니다." },
+        React.createElement(Select, { value: step, onChange: setStep, options: steps.map(s => ({ value: s, label: s })), placeholder: "단계 선택" })
+      ),
+      !editing && React.createElement("p", { className: "note-text" }, "임시 비밀번호는 자동으로 만들어지며, 만든 직후 한 번만 보여줍니다."),
+      error && React.createElement("p", { style: { color: "var(--danger)", fontSize: 13, margin: "8px 0 0" } }, error),
+      React.createElement("div", { style: { marginTop: 16, display: "flex", gap: 8, justifyContent: "flex-end" } },
+        React.createElement(Btn, { onClick: onClose }, "취소"),
+        React.createElement(Btn, { variant: "primary", type: "submit", disabled: busy || !ok }, busy ? "저장 중..." : (editing ? "저장" : "만들기"))
+      )
+    )
+  );
+}
+
+// 계정 목록·발급·수정·비활성·비밀번호 초기화. scope "admin": 내 조직 전체 / scope "super": 지정 조직의 관리자 계정만.
+function UserManager({ scope, orgId, me }) {
+  const [state, setState] = useState({ loading: true, users: [], org: null, error: "" });
+  const [form, setForm] = useState(null);
+  const [temp, setTemp] = useState(null);
+  const extra = scope === "super" ? { orgId } : {};
+
+  async function load() {
+    try {
+      const r = await apiRetrying("admin/users" + (scope === "super" ? `?orgId=${orgId}` : ""), {}, () => {});
+      setState({ loading: false, users: r.users, org: r.org, error: "" });
+    } catch (e) {
+      setState(s => ({ ...s, loading: false, error: e.message }));
+    }
+  }
+  useEffect(() => { load(); }, [orgId]);
+
+  async function toggleActive(u) {
+    const msg = u.isActive ? `"${u.displayName}"(${u.loginId}) 계정을 비활성화할까요? 즉시 로그아웃되고 로그인할 수 없게 됩니다.` : `"${u.displayName}"(${u.loginId}) 계정을 다시 활성화할까요?`;
+    if (!confirm(msg)) return;
+    try { await apiCall("admin/user_update", { method: "POST", body: { ...extra, id: u.id, isActive: !u.isActive } }); await load(); } catch (e) { alert(e.message); }
+  }
+  async function reset(u) {
+    if (!confirm(`"${u.displayName}"(${u.loginId})의 비밀번호를 초기화할까요? 현재 로그인은 모두 종료되고, 새 임시 비밀번호가 발급됩니다.`)) return;
+    try {
+      const r = await apiCall("admin/user_reset", { method: "POST", body: { ...extra, id: u.id } });
+      setTemp({ title: "비밀번호가 초기화되었습니다", loginId: r.loginId, tempPassword: r.tempPassword });
+      await load();
+    } catch (e) { alert(e.message); }
+  }
+
+  const statusBadge = u => !u.isActive ? React.createElement(Badge, { tone: "danger" }, "비활성") : u.locked ? React.createElement(Badge, { tone: "warn" }, "잠김") : React.createElement(Badge, { tone: "ok" }, "사용 중");
+
+  return React.createElement("div", null,
+    React.createElement("div", { className: "toolbar" },
+      React.createElement("div", { className: "toolbar-left" }, state.org && React.createElement("span", { style: { color: "var(--ink-soft)", fontSize: 13 } }, `${state.org.name} · 계정 ${state.users.length}개`)),
+      React.createElement("div", { className: "toolbar-right" }, React.createElement(Btn, { variant: "primary", icon: "plus", onClick: () => setForm({ mode: "create" }) }, scope === "super" ? "관리자 계정 추가" : "계정 만들기"))
+    ),
+    state.error && React.createElement("p", { style: { color: "var(--danger)", fontSize: 13 } }, state.error),
+    state.loading ? React.createElement("p", { className: "note-text" }, "불러오는 중...") :
+    React.createElement("div", { style: { overflowX: "auto" } },
+      React.createElement("table", { className: "data-table" },
+        React.createElement("thead", null, React.createElement("tr", null, ["아이디", "이름", "역할", "상태", "마지막 로그인", "관리"].map(h => React.createElement("th", { key: h }, h)))),
+        React.createElement("tbody", null, state.users.map(u => React.createElement("tr", { key: u.id },
+          React.createElement("td", { className: "mono" }, u.loginId),
+          React.createElement("td", null, u.displayName, me && u.id === me.id ? " (나)" : ""),
+          React.createElement("td", null, ROLE_LABELS[u.role] || u.role, u.approvalStep ? ` · ${u.approvalStep}` : ""),
+          React.createElement("td", null, statusBadge(u)),
+          React.createElement("td", null, fmtWhen(u.lastLoginAt)),
+          React.createElement("td", { style: { whiteSpace: "nowrap" } },
+            React.createElement(Btn, { size: "sm", variant: "ghost", onClick: () => setForm({ mode: "edit", user: u }) }, "수정"),
+            !(me && u.id === me.id) && React.createElement(Btn, { size: "sm", variant: "ghost", onClick: () => reset(u) }, "비밀번호 초기화"),
+            !(me && u.id === me.id) && React.createElement(Btn, { size: "sm", variant: "ghost", onClick: () => toggleActive(u) }, u.isActive ? "비활성화" : "활성화")
+          )
+        )))
+      )
+    ),
+    form && React.createElement(UserFormModal, {
+      mode: form.mode, user: form.user, org: state.org, scope, isSelf: !!(me && form.user && form.user.id === me.id),
+      onClose: () => setForm(null),
+      onSaved: t => { setForm(null); if (t) setTemp(t); load(); }
+    }),
+    React.createElement(TempPasswordDialog, { info: temp, onClose: () => setTemp(null) })
+  );
+}
+
+function AccountsScreen({ me }) {
+  return React.createElement(Card, { title: "계정 관리", subtitle: "직원 계정을 만들고 역할을 정합니다. 권한은 서버에서 계정별로 적용됩니다." },
+    React.createElement("p", { className: "note-text" }, ROLE_HINTS),
+    React.createElement(UserManager, { scope: "admin", me })
+  );
+}
+
+// 시스템관리자: 조직(중앙/본부/지부)과 조직 관리자 계정만 다룬다. 조직의 회계 데이터는 볼 수 없다.
 function SuperHome({ user, onLogout }) {
-  return React.createElement(AuthShell, { title: "시스템관리자", note: `${user.displayName}님으로 로그인되었습니다. 조직과 조직 관리자 계정을 만드는 화면은 다음 단계에서 추가됩니다.` },
-    React.createElement(Btn, { onClick: onLogout }, "로그아웃")
+  const [orgs, setOrgs] = useState(null);
+  const [error, setError] = useState("");
+  const [createOpen, setCreateOpen] = useState(false);
+  const [selected, setSelected] = useState(null);
+  const [temp, setTemp] = useState(null);
+  const [pwOpen, setPwOpen] = useState(false);
+
+  async function load() {
+    try { const r = await apiRetrying("admin/orgs", {}, () => {}); setOrgs(r.orgs); setError(""); } catch (e) { setError(e.message); }
+  }
+  useEffect(() => { load(); }, []);
+
+  async function toggleOrg(o) {
+    const msg = o.isActive ? `"${o.name}" 조직을 비활성화할까요? 이 조직의 모든 계정이 즉시 로그아웃되고 로그인할 수 없게 됩니다.` : `"${o.name}" 조직을 다시 활성화할까요?`;
+    if (!confirm(msg)) return;
+    try { await apiCall("admin/org_toggle", { method: "POST", body: { orgId: o.id, isActive: !o.isActive } }); await load(); } catch (e) { alert(e.message); }
+  }
+
+  return React.createElement("div", { style: { height: "100%", overflowY: "auto", background: "var(--paper)", padding: 20 } },
+    React.createElement("div", { style: { maxWidth: 980, margin: "0 auto" } },
+      React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 8, marginBottom: 16, flexWrap: "wrap" } },
+        React.createElement("h2", { style: { margin: 0, fontSize: 19, flex: 1 } }, "시스템관리자 · 조직 관리"),
+        React.createElement("span", { style: { color: "var(--ink-soft)", fontSize: 12.5 } }, `${user.displayName} (${user.loginId})`),
+        React.createElement(Btn, { variant: "ghost", size: "sm", onClick: () => setPwOpen(true) }, "비밀번호 변경"),
+        React.createElement(Btn, { variant: "ghost", size: "sm", onClick: onLogout }, "로그아웃")
+      ),
+      React.createElement(Card, { title: "조직", subtitle: "조직을 만들면 첫 조직 관리자 계정이 함께 만들어집니다. 직원 계정은 그 조직 관리자가 발급합니다.", actions: React.createElement(Btn, { variant: "primary", icon: "plus", onClick: () => setCreateOpen(true) }, "조직 만들기") },
+        error && React.createElement("p", { style: { color: "var(--danger)", fontSize: 13 } }, error),
+        orgs === null && !error ? React.createElement("p", { className: "note-text" }, "불러오는 중...") :
+        orgs && (orgs.length === 0
+          ? React.createElement("p", { className: "note-text" }, "아직 조직이 없습니다. [조직 만들기]로 첫 조직을 만들어 주세요.")
+          : React.createElement("div", { style: { overflowX: "auto" } },
+              React.createElement("table", { className: "data-table" },
+                React.createElement("thead", null, React.createElement("tr", null, ["조직", "유형", "사용 중 계정", "상태", "만든 날", "관리"].map(h => React.createElement("th", { key: h }, h)))),
+                React.createElement("tbody", null, orgs.map(o => React.createElement("tr", { key: o.id },
+                  React.createElement("td", { style: { fontWeight: 600 } }, o.name),
+                  React.createElement("td", null, React.createElement(Badge, { tone: orgTypeTone(o.orgType) }, orgTypeLabel(o.orgType))),
+                  React.createElement("td", null, o.activeUsers),
+                  React.createElement("td", null, o.isActive ? React.createElement(Badge, { tone: "ok" }, "사용 중") : React.createElement(Badge, { tone: "danger" }, "비활성")),
+                  React.createElement("td", null, fmtWhen(o.createdAt)),
+                  React.createElement("td", { style: { whiteSpace: "nowrap" } },
+                    React.createElement(Btn, { size: "sm", variant: "ghost", onClick: () => setSelected(o) }, "관리자 계정"),
+                    React.createElement(Btn, { size: "sm", variant: "ghost", onClick: () => toggleOrg(o) }, o.isActive ? "비활성화" : "활성화")
+                  )
+                )))
+              )
+            ))
+      )
+    ),
+    createOpen && React.createElement(OrgCreateModal, {
+      onClose: () => setCreateOpen(false),
+      onCreated: t => { setCreateOpen(false); setTemp(t); load(); }
+    }),
+    selected && React.createElement(Modal, { open: true, onClose: () => { setSelected(null); load(); }, title: `${selected.name} · 관리자 계정`, width: 760 },
+      React.createElement(UserManager, { scope: "super", orgId: selected.id, me: user })
+    ),
+    React.createElement(TempPasswordDialog, { info: temp, onClose: () => setTemp(null) }),
+    React.createElement(Modal, { open: pwOpen, onClose: () => setPwOpen(false), title: "비밀번호 변경" },
+      pwOpen && React.createElement(PasswordForm, {
+        onDone: () => { setPwOpen(false); alert("비밀번호가 변경되었습니다. 다른 기기의 로그인은 모두 종료됩니다."); },
+        onCancel: () => setPwOpen(false)
+      })
+    )
+  );
+}
+
+function OrgCreateModal({ onClose, onCreated }) {
+  const [f, setF] = useState({ name: "", orgType: "", adminLoginId: "", adminDisplayName: "" });
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  const set = (k, v) => setF(prev => ({ ...prev, [k]: v }));
+  const ok = f.name.trim() && f.orgType && f.adminLoginId.trim() && f.adminDisplayName.trim();
+
+  async function submit() {
+    if (busy || !ok) return;
+    setBusy(true); setError("");
+    try {
+      const r = await apiCall("admin/org_create", { method: "POST", body: { name: f.name.trim(), orgType: f.orgType, adminLoginId: f.adminLoginId.trim(), adminDisplayName: f.adminDisplayName.trim() } });
+      onCreated({ title: "조직과 관리자 계정이 만들어졌습니다", loginId: r.adminLoginId, tempPassword: r.tempPassword });
+    } catch (e) {
+      setError(e.message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return React.createElement(Modal, { open: true, onClose, title: "조직 만들기" },
+    React.createElement("form", { onSubmit: e => { e.preventDefault(); submit(); } },
+      React.createElement(Field, { label: "조직 이름", required: true, hint: "예: 한국수력원자력노동조합, 새울지부" },
+        React.createElement("input", { className: "kinput", value: f.name, onChange: e => set("name", e.target.value), maxLength: 100, autoFocus: true, autoComplete: "off" })
+      ),
+      React.createElement(Field, { label: "조직 유형", required: true, hint: "유형에 따라 결재선이 정해집니다." },
+        React.createElement(Select, { value: f.orgType, onChange: v => set("orgType", v), placeholder: "유형 선택", options: [
+          { value: "central", label: "중앙 (" + APPROVAL_PRESETS.central.join(" → ") + ")" },
+          { value: "headquarters", label: "본부 (" + APPROVAL_PRESETS.headquarters.join(" → ") + ")" },
+          { value: "branch", label: "지부 (" + APPROVAL_PRESETS.branch.join(" → ") + ")" },
+        ] })
+      ),
+      React.createElement(Field, { label: "조직 관리자 아이디", required: true, hint: "영문·숫자·. _ - 3~50자" },
+        React.createElement("input", { className: "kinput", value: f.adminLoginId, onChange: e => set("adminLoginId", e.target.value), maxLength: 50, autoComplete: "off" })
+      ),
+      React.createElement(Field, { label: "조직 관리자 이름", required: true },
+        React.createElement("input", { className: "kinput", value: f.adminDisplayName, onChange: e => set("adminDisplayName", e.target.value), maxLength: 50, autoComplete: "off" })
+      ),
+      error && React.createElement("p", { style: { color: "var(--danger)", fontSize: 13, margin: "8px 0 0" } }, error),
+      React.createElement("div", { style: { marginTop: 16, display: "flex", gap: 8, justifyContent: "flex-end" } },
+        React.createElement(Btn, { onClick: onClose }, "취소"),
+        React.createElement(Btn, { variant: "primary", type: "submit", disabled: busy || !ok }, busy ? "만드는 중..." : "만들기")
+      )
+    )
   );
 }
 
@@ -3169,16 +3444,18 @@ function MainApp({ authUser, onLogout }) {
     setNav(key);
     setMoreOpen(false);
     if (key === "voucher" && voucher) setEditingVoucher(voucher);
-    trackMenuClick(key);
+    if (key !== "accounts") trackMenuClick(key); // 계정 관리는 클릭 집계 대상이 아니다
   }
 
-  const navLabel = NAV_ITEMS.find(n => n.key === nav)?.label || "";
+  // 조직 관리자에게만 "계정 관리" 메뉴가 보인다(서버에서도 같은 권한을 검사한다).
+  const navItems = authUser.role === "admin" ? [...NAV_ITEMS, { key: "accounts", label: "계정 관리", icon: "users" }] : NAV_ITEMS;
+  const navLabel = navItems.find(n => n.key === nav)?.label || "";
 
   if (!data.orgSetupDone) {
     return React.createElement(OnboardingScreen, { onComplete: completeOnboarding });
   }
 
-  const moreItems = NAV_ITEMS.filter(item => !MOBILE_TAB_KEYS.includes(item.key));
+  const moreItems = navItems.filter(item => !MOBILE_TAB_KEYS.includes(item.key));
   const isMoreActive = moreItems.some(item => item.key === nav);
 
   return React.createElement("div", { className: "app-shell" + (isMobile ? " is-mobile" : "") },
@@ -3189,7 +3466,7 @@ function MainApp({ authUser, onLogout }) {
         React.createElement(Badge, { tone: orgTypeTone(data.orgType) }, orgTypeLabel(data.orgType) + "용")
       ),
       React.createElement("nav", { className: "nav-group" },
-        NAV_ITEMS.map(item => React.createElement("div", {
+        navItems.map(item => React.createElement("div", {
           key: item.key, className: "nav-item" + (nav === item.key ? " active" : ""),
           onClick: () => goNav(item.key)
         }, React.createElement(Icon, { name: item.icon, size: 17 }), item.label))
@@ -3234,13 +3511,14 @@ function MainApp({ authUser, onLogout }) {
         nav === "asset" && React.createElement(AssetScreen, { data, onAdd: addAsset, onDelete: deleteAsset }),
         nav === "contract" && React.createElement(ContractScreen, { data, onAdd: addContract, onDelete: deleteContract, onUpdateContract: updateContract }),
         nav === "yearend" && React.createElement(YearEndScreen, { data, onCloseYear: closeYear, onNavBudget: () => setNav("budget") }),
+        nav === "accounts" && authUser.role === "admin" && React.createElement(AccountsScreen, { me: authUser }),
         nav === "settings" && React.createElement(SettingsScreen, { data, onImport: handleImport, onUpdateOrg: updateOrgSettings, saveStatus, menuClickTotal }),
       )
     ),
 
     isMobile && React.createElement("nav", { className: "bottom-tabbar" },
       MOBILE_TAB_KEYS.map(key => {
-        const item = NAV_ITEMS.find(n => n.key === key);
+        const item = navItems.find(n => n.key === key);
         return React.createElement("button", {
           key: key, className: "tab-item" + (nav === key ? " active" : ""),
           onClick: () => goNav(key)

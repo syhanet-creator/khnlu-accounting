@@ -51,9 +51,10 @@ const handlers = {
     }
 
     const r = await run(
-      `SELECT TOP 1 id, org_id, login_id, password_hash, is_active,
-              CASE WHEN locked_until IS NOT NULL AND locked_until > SYSUTCDATETIME() THEN 1 ELSE 0 END AS locked
-       FROM dbo.users WHERE login_id = @l`,
+      `SELECT TOP 1 u.id, u.org_id, u.login_id, u.password_hash,
+              CASE WHEN u.is_active = 1 AND (u.org_id IS NULL OR o.is_active = 1) THEN 1 ELSE 0 END AS is_active,
+              CASE WHEN u.locked_until IS NOT NULL AND u.locked_until > SYSUTCDATETIME() THEN 1 ELSE 0 END AS locked
+       FROM dbo.users u LEFT JOIN dbo.organizations o ON o.id = u.org_id WHERE u.login_id = @l`,
       { l: [sql.NVarChar(50), loginId.trim()] }
     );
     const user = r.recordset[0];
