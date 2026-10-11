@@ -58,6 +58,27 @@ async function run(text, params = {}) {
   throw err;
 }
 
+// 여러 문장을 한 트랜잭션으로 실행한다. fn(q) 안에서 q("SQL", {param: [type, value]})로 쿼리하고, 예외가 나면 전부 되돌린다.
+async function tx(fn) {
+  await run("SELECT 1 AS ok"); // 일시중지된 DB를 먼저 깨운다(재시도 포함)
+  const pool = await getPool();
+  const t = new sql.Transaction(pool);
+  await t.begin();
+  const q = (text, params = {}) => {
+    const req = new sql.Request(t);
+    for (const [name, [type, value]] of Object.entries(params)) req.input(name, type, value);
+    return req.query(text);
+  };
+  try {
+    const out = await fn(q);
+    await t.commit();
+    return out;
+  } catch (e) {
+    try { await t.rollback(); } catch (_) {}
+    throw e;
+  }
+}
+
 async function audit({ orgId = null, userId = null, loginId = null, action, target = null, detail = null, ip = null }) {
   try {
     await run(
@@ -77,4 +98,4 @@ async function audit({ orgId = null, userId = null, loginId = null, action, targ
   }
 }
 
-module.exports = { sql, run, audit };
+module.exports = { sql, run, tx, audit };

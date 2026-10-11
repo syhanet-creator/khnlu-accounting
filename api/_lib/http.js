@@ -52,4 +52,8 @@ function guard(req, res, methods) {
   return true;
 }
 
-module.exports = { send, clientIp, parseCookies, getBody, guard };
+class HttpError extends Error {
+  constructor(status, message) { super(message); this.status = status; }
+}
+
+module.exports = { send, clientIp, parseCookies, getBody, guard, HttpError };

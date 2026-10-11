@@ -886,6 +886,11 @@ function fyLabel(dateStr) {
   const m = d.getMonth() + 1;
   return m >= 4 ? `${y}회계연도` : `${y - 1}회계연도`;
 }
+function fyOfDate(dateStr) {
+  // 날짜가 속한 회계연도의 시작연도 (4/1~익년 3/31)
+  const y = Number(String(dateStr).slice(0, 4)), m = Number(String(dateStr).slice(5, 7));
+  return m >= 4 ? y : y - 1;
+}
 function fyRange(fyYear) {
   // fyYear = 시작연도 (예: 2026 -> 2026.4.1~2027.3.31)
   return { start: `${fyYear}-04-01`, end: `${fyYear + 1}-03-31` };
@@ -1787,7 +1792,7 @@ function buildVoucherLineTips(v, accMap) {
   }).filter(Boolean);
 }
 
-function VoucherForm({ data, voucher, onChange, onSave, onCancel, accountOptions }) {
+function VoucherForm({ data, voucher, readOnly, onChange, onSave, onCancel, accountOptions }) {
   const [v, setV] = useState(voucher);
   useEffect(() => setV(voucher), [voucher.id]);
 
@@ -1816,7 +1821,7 @@ function VoucherForm({ data, voucher, onChange, onSave, onCancel, accountOptions
   const lineTips = buildVoucherLineTips(v, accMapForTips);
 
   return React.createElement("div", { className: "voucher-form" },
-    React.createElement("div", { className: "voucher-paper" },
+    React.createElement("fieldset", { className: "voucher-paper", disabled: !!readOnly, style: { margin: 0, minWidth: 0 } },
       React.createElement("div", { className: "voucher-title-block" },
         React.createElement("h2", null, "회 계 결 의 서"),
         React.createElement("div", { className: "voucher-org" }, data.org)
@@ -1827,9 +1832,12 @@ function VoucherForm({ data, voucher, onChange, onSave, onCancel, accountOptions
           React.createElement("div", { className: "approval-sign" }, v.approvals[step]?.approved ? "인" : "")
         ))
       ),
+      v.rejection && React.createElement("p", { className: "note-text", style: { color: "var(--danger)" } }, `반려됨 - ${v.rejection.step} ${v.rejection.by}: ${v.rejection.reason}`),
+      v.revocation && React.createElement("p", { className: "note-text" }, `승인 취소됨 - ${v.revocation.by}: ${v.revocation.reason}`),
+      v.status === "approved" && v.createdByName && React.createElement("p", { className: "note-text" }, `작성자: ${v.createdByName}`),
       React.createElement("div", { className: "voucher-meta-grid" },
-        React.createElement(Field, { label: "문서번호" },
-          React.createElement("input", { className: "kinput", value: v.docNo, onChange: e => update({ docNo: e.target.value }) })),
+        React.createElement(Field, { label: "문서번호", hint: v.version === undefined ? "저장할 때 서버가 자동으로 부여합니다" : undefined },
+          React.createElement("input", { className: "kinput", value: v.version === undefined ? "" : v.docNo, placeholder: "(저장 시 자동 부여)", disabled: true, readOnly: true })),
         React.createElement(Field, { label: "작성일자" },
           React.createElement("input", { type: "date", className: "kinput", value: v.date, onChange: e => update({ date: e.target.value, fy: fyLabel(e.target.value) }) })),
         React.createElement(Field, { label: "전표구분" },
@@ -1920,18 +1928,18 @@ function VoucherForm({ data, voucher, onChange, onSave, onCancel, accountOptions
       ),
       React.createElement(Field, { label: "증빙 파일 (PDF)", hint: "영수증/세금계산서 등 증빙 PDF를 여러 개 첨부할 수 있습니다" },
         React.createElement(AttachmentManager, {
-          category: "voucher", entityId: v.id, attachments: v.attachments,
+          category: "voucher", entityId: v.id, attachments: v.attachments, readOnly: !!readOnly,
           onChange: next => update({ attachments: next })
         }))
     ),
-    React.createElement(VoucherPrintActions, { voucher: v, onCancel, onSave, balanced })
+    React.createElement(VoucherPrintActions, { voucher: v, onCancel, onSave, balanced, readOnly })
   );
 }
 
 // 인쇄(서명용) 단독 인쇄 / 증빙파일 포함 일괄 인쇄를 처리한다.
 // window.print()는 브라우저 네이티브 인쇄창을 띄우며, 창이 닫히는 시점(afterprint)에
 // 이어서 첨부된 PDF 증빙을 기본 프린터로 전송한다(각 파일을 연결 프로그램의 인쇄 기능으로 전달).
-function VoucherPrintActions({ voucher, onCancel, onSave, balanced }) {
+function VoucherPrintActions({ voucher, onCancel, onSave, balanced, readOnly }) {
   const pendingRef = useRef(false);
   const attachments = voucher.attachments || [];
 
@@ -1960,17 +1968,17 @@ function VoucherPrintActions({ voucher, onCancel, onSave, balanced }) {
   }
 
   return React.createElement("div", { className: "voucher-actions" },
-    React.createElement(Btn, { variant: "ghost", onClick: onCancel }, "취소"),
+    React.createElement(Btn, { variant: "ghost", onClick: onCancel }, readOnly ? "닫기" : "취소"),
     React.createElement(Btn, { variant: "outline", icon: "print", onClick: printOnly }, "인쇄(서명용)"),
     attachments.length > 0 && React.createElement(Btn, {
       variant: "outline", icon: "print", onClick: printWithAttachments
     }, `증빙 포함 일괄인쇄 (${attachments.length})`),
-    React.createElement(Btn, { variant: "outline", onClick: () => onSave({ ...voucher, status: "draft" }) }, "임시저장"),
-    React.createElement(Btn, { variant: "primary", disabled: !balanced || !voucher.title, onClick: () => onSave({ ...voucher, status: "pending" }) }, "결재상신")
+    !readOnly && React.createElement(Btn, { variant: "outline", onClick: () => onSave({ ...voucher, status: "draft" }) }, "임시저장"),
+    !readOnly && React.createElement(Btn, { variant: "primary", disabled: !balanced || !voucher.title, onClick: () => onSave({ ...voucher, status: "pending" }) }, "결재상신")
   );
 }
 
-function VoucherList({ data, onEdit, onNew, onApprove, onDelete }) {
+function VoucherList({ data, perms, onEdit, onNew, onApprove, onReject, onRecall, onRevoke, onDelete }) {
   const [q, setQ] = useState("");
   const [statusFilter, setStatusFilter] = useState("");
   const [typeFilter, setTypeFilter] = useState("");
@@ -2000,12 +2008,12 @@ function VoucherList({ data, onEdit, onNew, onApprove, onDelete }) {
       ),
       React.createElement("div", { className: "toolbar-right" },
         React.createElement(Btn, { variant: "outline", icon: "download", onClick: () => exportVouchersExcel(filtered) }, "Excel"),
-        React.createElement(Btn, { variant: "primary", icon: "plus", onClick: onNew }, "새 회계결의서")
+        perms.canEdit && React.createElement(Btn, { variant: "primary", icon: "plus", onClick: onNew }, "새 회계결의서")
       )
     ),
     filtered.length === 0 ? React.createElement(EmptyState, {
-      icon: "voucher", title: "등록된 회계결의서가 없습니다", desc: "새 회계결의서를 작성해 보세요.",
-      action: React.createElement(Btn, { variant: "primary", icon: "plus", onClick: onNew }, "새 회계결의서")
+      icon: "voucher", title: "등록된 회계결의서가 없습니다", desc: perms.canEdit ? "새 회계결의서를 작성해 보세요." : "작성된 회계결의서가 아직 없습니다.",
+      action: perms.canEdit ? React.createElement(Btn, { variant: "primary", icon: "plus", onClick: onNew }, "새 회계결의서") : null
     }) :
     React.createElement("table", { className: "data-table as-cards" },
       React.createElement("thead", null, React.createElement("tr", null,
@@ -2021,11 +2029,18 @@ function VoucherList({ data, onEdit, onNew, onApprove, onDelete }) {
           React.createElement("td", { className: "titlecell", "data-label": "제목", onClick: () => onEdit(v) }, v.title),
           React.createElement("td", { className: "num", "data-label": "차변" }, fmtNum(voucherTotal(v, "debit"))),
           React.createElement("td", { className: "num", "data-label": "대변" }, fmtNum(voucherTotal(v, "credit"))),
-          React.createElement("td", { "data-label": "상태" }, React.createElement(StatusBadge, { status: v.status })),
+          React.createElement("td", { "data-label": "상태" },
+            React.createElement(StatusBadge, { status: v.status }),
+            v.status === "pending" && React.createElement("div", { style: { fontSize: 11, color: "var(--ink-soft)", marginTop: 2 } }, `다음: ${perms.nextStepOf(v) || "-"}`)),
           React.createElement("td", { className: "rowactions", "data-label": "" },
-            v.status === "pending" && React.createElement("button", { className: "icon-btn ok", title: "승인", onClick: () => onApprove(v) }, React.createElement(Icon, { name: "check", size: 14 })),
-            React.createElement("button", { className: "icon-btn", title: "수정", onClick: () => onEdit(v) }, React.createElement(Icon, { name: "edit", size: 14 })),
-            React.createElement("button", { className: "icon-btn danger", title: "삭제", onClick: () => onDelete(v) }, React.createElement(Icon, { name: "trash", size: 14 })),
+            perms.canApproveNow(v) && React.createElement("button", { className: "icon-btn ok", title: "승인", onClick: () => onApprove(v) }, React.createElement(Icon, { name: "check", size: 14 })),
+            perms.canApproveNow(v) && React.createElement("button", { className: "icon-btn danger", title: "반려", onClick: () => onReject(v) }, React.createElement(Icon, { name: "x", size: 14 })),
+            perms.canEditVoucher(v)
+              ? React.createElement("button", { className: "icon-btn", title: "수정", onClick: () => onEdit(v) }, React.createElement(Icon, { name: "edit", size: 14 }))
+              : React.createElement("button", { className: "icon-btn", title: "보기", onClick: () => onEdit(v) }, React.createElement(Icon, { name: "file", size: 14 })),
+            perms.canRecall(v) && React.createElement("button", { className: "kbtn kbtn-ghost kbtn-sm", title: "결재 중인 전표를 회수해 수정", onClick: () => onRecall(v) }, "회수"),
+            perms.canRevoke(v) && React.createElement("button", { className: "kbtn kbtn-ghost kbtn-sm", title: "승인된 전표의 승인을 취소(사유 기록)", onClick: () => onRevoke(v) }, "승인취소"),
+            perms.canDelete(v) && React.createElement("button", { className: "icon-btn danger", title: "삭제", onClick: () => onDelete(v) }, React.createElement(Icon, { name: "trash", size: 14 })),
           )
         ))
       )
@@ -2241,7 +2256,7 @@ function ReportsScreen({ data }) {
     )
   );
 }
-function BudgetScreen({ data, onUpdateBudget, onAddRevision }) {
+function BudgetScreen({ data, canEdit, onUpdateBudget, onAddRevision }) {
   const [fyYear, setFyYear] = useState(data.currentFY);
   const [tab, setTab] = useState("plan"); // plan | revise | exec
   const budget = getBudget(data, fyYear);
@@ -2287,7 +2302,7 @@ function BudgetScreen({ data, onUpdateBudget, onAddRevision }) {
             expenseAccounts.filter(a => a.type === type).map(a => React.createElement("tr", { key: a.id },
               React.createElement("td", { "data-label": "관" }, a.gwan), React.createElement("td", { "data-label": "항" }, a.hang), React.createElement("td", { "data-label": "목" }, a.mok),
               React.createElement("td", { "data-label": "예산액" }, React.createElement("input", {
-                type: "number", className: "kinput num", value: budget[a.id] || "", onChange: e => setAmt(a.id, e.target.value)
+                type: "number", className: "kinput num", value: budget[a.id] || "", disabled: !canEdit, onChange: e => setAmt(a.id, e.target.value)
               }))
             ))
           )
@@ -2300,7 +2315,7 @@ function BudgetScreen({ data, onUpdateBudget, onAddRevision }) {
 
     tab === "revise" && React.createElement("div", null,
       React.createElement("p", { className: "note-text" }, "규정 제18조(전용): 항간 전용은 중앙집행위원회 결의, 목간 전용은 위원장 결정으로 집행. 제19조(추경): 대의원대회 의결 필요."),
-      React.createElement(Btn, { variant: "primary", icon: "plus", onClick: () => setRevisionModal({ type: "transfer", from: "", to: "", amount: "", note: "", approvalLevel: "항간" }) }, "예산 전용/추경 등록"),
+      canEdit && React.createElement(Btn, { variant: "primary", icon: "plus", onClick: () => setRevisionModal({ type: "transfer", from: "", to: "", amount: "", note: "", approvalLevel: "항간" }) }, "예산 전용/추경 등록"),
       React.createElement("table", { className: "data-table as-cards", style: { marginTop: 16 } },
         React.createElement("thead", null, React.createElement("tr", null,
           React.createElement("th", null, "일자"), React.createElement("th", null, "구분"), React.createElement("th", null, "내용"), React.createElement("th", null, "승인절차"), React.createElement("th", null, "금액")
@@ -2372,7 +2387,7 @@ function BudgetScreen({ data, onUpdateBudget, onAddRevision }) {
     )
   );
 }
-function YearEndScreen({ data, onCloseYear, onNavBudget }) {
+function YearEndScreen({ data, canClose, onCloseYear, onNavBudget }) {
   const years = fyList(data);
   const [fyYear, setFyYear] = useState(data.currentFY);
   const range = fyRange(fyYear);
@@ -2432,9 +2447,10 @@ function YearEndScreen({ data, onCloseYear, onNavBudget }) {
               React.createElement("li", null, "마감 처리는 되돌릴 수 없으니, 백업 파일을 먼저 다운로드해 두는 것을 권장합니다.")
             ),
 
+            !canClose && React.createElement("p", { className: "note-text" }, "연도 마감은 조직 관리자만 할 수 있습니다."),
             React.createElement("div", { style: { display: "flex", gap: 10, marginTop: 18 } },
               React.createElement(Btn, {
-                variant: "primary", icon: "check", disabled: pendingInFY.length > 0,
+                variant: "primary", icon: "check", disabled: pendingInFY.length > 0 || !canClose,
                 onClick: () => {
                   if (!confirm(`${fyYear}회계연도를 마감하고 수지차액 ${fmtNum(stmt.net)}원을 ${nextFY}회계연도로 이월할까요? 이 작업은 되돌릴 수 없습니다.`)) return;
                   onCloseYear(fyYear);
@@ -2497,7 +2513,7 @@ function SearchScreen({ data }) {
   );
 }
 
-function AssetScreen({ data, onAdd, onDelete }) {
+function AssetScreen({ data, canEdit, canDelete, onAdd, onDelete }) {
   const [modal, setModal] = useState(null);
   const accMap = {};
   FLAT_ACCOUNTS.forEach(a => accMap[a.id] = a);
@@ -2513,7 +2529,7 @@ function AssetScreen({ data, onAdd, onDelete }) {
       React.createElement("div", { className: "toolbar-left" }, React.createElement("span", { className: "muted" }, "규정 제46조: 취득가격 50만원 이상, 내용연수 1년 이상 물품은 기구비품대장에 등재")),
       React.createElement("div", { className: "toolbar-right" },
         React.createElement(Btn, { variant: "outline", icon: "download", onClick: () => exportAssetsExcel(data.fixedAssets) }, "Excel"),
-        React.createElement(Btn, { variant: "primary", icon: "plus", onClick: () => setModal({ name: "", qty: 1, acquireDate: todayStr(), price: "", usefulLifeYears: 5, salvageValue: 0, paymentAccount: "bs-1101", note: "" }) }, "비품 등록")
+        canEdit && React.createElement(Btn, { variant: "primary", icon: "plus", onClick: () => setModal({ name: "", qty: 1, acquireDate: todayStr(), price: "", usefulLifeYears: 5, salvageValue: 0, paymentAccount: "bs-1101", note: "" }) }, "비품 등록")
       )
     ),
     React.createElement("p", { className: "note-text" }, "비품을 등록하면 취득 전표가 자동으로 생성되어 재무상태표의 자산으로 반영되고, 매년 12월 31일 기준으로 감가상각비가 자동 계산되어 [연도 마감] 시 반영됩니다."),
@@ -2531,7 +2547,7 @@ function AssetScreen({ data, onAdd, onDelete }) {
           React.createElement("td", { className: "num", "data-label": "구입금액" }, fmtNum(a.price)), React.createElement("td", { "data-label": "내용연수" }, `${a.usefulLifeYears || 0}년`),
           React.createElement("td", { className: "num", "data-label": "감가상각누계액" }, fmtNum(accumDep)),
           React.createElement("td", { className: "num", "data-label": "장부가액" }, fmtNum(bookValue)),
-          React.createElement("td", { "data-label": "" }, React.createElement("button", { className: "icon-btn danger", onClick: () => onDelete(a.id) }, React.createElement(Icon, { name: "trash", size: 14 })))
+          React.createElement("td", { "data-label": "" }, canDelete && React.createElement("button", { className: "icon-btn danger", onClick: () => onDelete(a.id) }, React.createElement(Icon, { name: "trash", size: 14 })))
         );
       }))
     ),
@@ -2568,14 +2584,14 @@ function AssetScreen({ data, onAdd, onDelete }) {
   );
 }
 
-function ContractScreen({ data, onAdd, onDelete, onUpdateContract }) {
+function ContractScreen({ data, canEdit, onAdd, onDelete, onUpdateContract }) {
   const [modal, setModal] = useState(null);
   const [attachTarget, setAttachTarget] = useState(null); // 기존 계약의 첨부파일 관리 대상
   return React.createElement("div", null,
     React.createElement("div", { className: "toolbar" },
       React.createElement("div", { className: "toolbar-left" }, React.createElement("span", { className: "muted" }, "규정 제38조: 추정가격 5,000만원 이상은 경쟁입찰, 미만은 수의계약 가능")),
       React.createElement("div", { className: "toolbar-right" },
-        React.createElement(Btn, {
+        canEdit && React.createElement(Btn, {
           variant: "primary", icon: "plus",
           onClick: () => setModal({ id: uid("ct"), title: "", counterparty: "", amount: "", method: "수의계약", startDate: todayStr(), endDate: "", note: "", attachments: [] })
         }, "계약 등록")
@@ -2605,7 +2621,7 @@ function ContractScreen({ data, onAdd, onDelete, onUpdateContract }) {
             React.createElement(Btn, {
               variant: "outline", size: "sm", icon: "attach", onClick: () => setAttachTarget(c.id)
             }, `${(c.attachments || []).length || ""}`.trim() || "0")),
-          React.createElement("td", { "data-label": "" }, React.createElement("button", { className: "icon-btn danger", onClick: () => onDelete(c.id) }, React.createElement(Icon, { name: "trash", size: 14 })))
+          React.createElement("td", { "data-label": "" }, canEdit && React.createElement("button", { className: "icon-btn danger", onClick: () => { if (confirm(`"${c.title}" 계약을 삭제할까요?`)) onDelete(c.id); } }, React.createElement(Icon, { name: "trash", size: 14 })))
         );
       }))
     ),
@@ -2637,7 +2653,7 @@ function ContractScreen({ data, onAdd, onDelete, onUpdateContract }) {
         return React.createElement("div", { className: "modal-form" },
           React.createElement("p", { className: "note-text" }, c.title),
           React.createElement(AttachmentManager, {
-            category: "contract", entityId: c.id, attachments: c.attachments,
+            category: "contract", entityId: c.id, attachments: c.attachments, readOnly: !canEdit,
             onChange: next => onUpdateContract(c.id, { attachments: next })
           }),
           React.createElement("div", { className: "voucher-actions" },
@@ -2649,64 +2665,27 @@ function ContractScreen({ data, onAdd, onDelete, onUpdateContract }) {
   );
 }
 
-function SettingsScreen({ data, onImport, onUpdateOrg, saveStatus, menuClickTotal }) {
+function SettingsScreen({ data, isAdmin, onImport, saveStatus, menuClickTotal }) {
   const fileRef = useRef(null);
-  const [editingOrg, setEditingOrg] = useState(false);
-  const [orgType, setOrgType] = useState(data.orgType);
-  const [orgName, setOrgName] = useState(data.orgName || "");
-
-  function saveOrgSettings() {
-    const approvalSteps = APPROVAL_PRESETS[orgType];
-    onUpdateOrg({ orgType, orgName, approvalSteps });
-    setEditingOrg(false);
-  }
 
   return React.createElement("div", null,
-    React.createElement(Card, {
-      title: "조직 설정", subtitle: "결재선은 조직 유형에 따라 자동으로 정해집니다.",
-      actions: !editingOrg && React.createElement(Btn, { variant: "outline", size: "sm", icon: "edit", onClick: () => setEditingOrg(true) }, "변경")
-    },
-      !editingOrg
-        ? React.createElement("div", { style: { display: "flex", gap: 16, alignItems: "center" } },
-            React.createElement(Badge, { tone: orgTypeTone(data.orgType) }, orgTypeLabel(data.orgType)),
-            React.createElement("span", { style: { fontWeight: 700 } }, data.orgName),
-            React.createElement("span", { className: "muted" }, `결재선: ${(data.approvalSteps || []).join(" → ")}`)
-          )
-        : React.createElement("div", { className: "modal-form" },
-            React.createElement("div", { className: "org-choice-grid org-choice-grid-3" },
-              React.createElement("button", { className: "org-choice" + (orgType === "central" ? " selected" : ""), onClick: () => setOrgType("central") },
-                React.createElement("div", { className: "org-choice-title" }, "중앙"),
-                React.createElement("div", { className: "org-choice-desc" }, "결재선: 담당국장 → 총무국장 → 사무처장 → 수석부위원장 → 중앙위원장")),
-              React.createElement("button", { className: "org-choice" + (orgType === "headquarters" ? " selected" : ""), onClick: () => setOrgType("headquarters") },
-                React.createElement("div", { className: "org-choice-title" }, "본부"),
-                React.createElement("div", { className: "org-choice-desc" }, "결재선: 사무장 → 부위원장 → 본부위원장")),
-              React.createElement("button", { className: "org-choice" + (orgType === "branch" ? " selected" : ""), onClick: () => setOrgType("branch") },
-                React.createElement("div", { className: "org-choice-title" }, "지부"),
-                React.createElement("div", { className: "org-choice-desc" }, "결재선: 사무장 → 부위원장 → 지부위원장"))
-            ),
-            React.createElement(Field, {
-              label: orgType === "branch" ? "지부명" : orgType === "central" ? "중앙(명칭)" : "본부명",
-              hint: orgType === "branch" ? "예: 새울지부" : "예: 한국수력원자력노동조합"
-            },
-              React.createElement("input", {
-                className: "kinput", value: orgName, onChange: e => setOrgName(e.target.value),
-                placeholder: orgType === "branch" ? "지부명을 입력하세요 (예: 새울지부)" : "조직명을 입력하세요 (예: 한국수력원자력노동조합)"
-              })),
-            React.createElement("div", { className: "voucher-actions" },
-              React.createElement(Btn, { variant: "ghost", onClick: () => setEditingOrg(false) }, "취소"),
-              React.createElement(Btn, { variant: "primary", disabled: !orgType || !orgName.trim(), onClick: saveOrgSettings }, "저장")
-            )
-          )
+    React.createElement(Card, { title: "조직 정보", subtitle: "조직 이름·유형은 시스템관리자가 관리합니다. 결재선은 조직 유형에 따라 정해집니다." },
+      React.createElement("div", { style: { display: "flex", gap: 16, alignItems: "center", flexWrap: "wrap" } },
+        React.createElement(Badge, { tone: orgTypeTone(data.orgType) }, orgTypeLabel(data.orgType)),
+        React.createElement("span", { style: { fontWeight: 700 } }, data.orgName),
+        React.createElement("span", { className: "muted" }, `결재선: ${(data.approvalSteps || []).join(" → ")}`)
+      )
     ),
     React.createElement(Card, { title: "데이터 백업 / 복원" },
-      saveStatus === "error" && React.createElement("p", { className: "note-text", style: { color: "var(--danger)", fontWeight: 600 } }, "⚠ 자동 저장에 실패했습니다. 브라우저 저장 공간이 가득 찼거나 비공개(시크릿) 모드일 수 있습니다. 지금 바로 백업 파일을 내려받아 두세요."),
-      React.createElement("p", { className: "note-text" }, "이 프로그램은 이 PC의 브라우저에 데이터를 자동 저장합니다. 같은 PC·같은 브라우저로 다시 열면 마지막 작업 내용이 그대로 이어집니다. 다만 브라우저 데이터 삭제, PC 교체, 다른 브라우저 사용 시에는 저장된 내용을 잃을 수 있으므로, 주기적으로(예: 매일 업무 종료 후) 백업 파일(JSON)을 내려받아 별도로 보관하시길 권장합니다."),
-      React.createElement("p", { className: "note-text" }, "회계결의서·계약서에 첨부한 PDF 파일 자체는 백업 파일(JSON)에 포함되지 않고 이 PC에 별도 보관됩니다. 다른 PC로 옮기실 때는 백업 파일과 함께 첨부파일 폴더도 옮겨야 합니다."),
-      React.createElement("div", { style: { display: "flex", gap: 10, marginTop: 12 } },
+      saveStatus === "error" && React.createElement("p", { className: "note-text", style: { color: "var(--danger)", fontWeight: 600 } }, "⚠ 서버 저장에 실패했습니다. 인터넷 연결을 확인한 뒤 새로고침해 서버의 최신 상태를 확인하세요. 필요하면 지금 백업 파일을 내려받아 두세요."),
+      React.createElement("p", { className: "note-text" }, "이 프로그램의 데이터는 서버(Azure SQL 데이터베이스)에 저장되며, 로그인한 담당자 모두가 같은 데이터를 봅니다. 별도 보관용으로 주기적으로(예: 매일 업무 종료 후) 백업 파일(JSON)을 내려받아 두시길 권장합니다."),
+      React.createElement("p", { className: "note-text" }, "회계결의서·계약서의 증빙 PDF 첨부는 실행 파일(EXE) 버전에서만 지원되며, 서버 버전에서는 아직 지원하지 않습니다."),
+      React.createElement("div", { style: { display: "flex", gap: 10, marginTop: 12, flexWrap: "wrap" } },
         React.createElement(Btn, { variant: "primary", icon: "download", onClick: () => downloadBackup(data) }, "백업 파일 다운로드 (.json)"),
-        React.createElement(Btn, { variant: "outline", icon: "upload", onClick: () => fileRef.current.click() }, "백업 파일 불러오기"),
+        isAdmin && React.createElement(Btn, { variant: "outline", icon: "upload", onClick: () => fileRef.current.click() }, "백업 파일 서버로 가져오기"),
         React.createElement("input", { type: "file", accept: ".json", ref: fileRef, style: { display: "none" }, onChange: e => handleImportFile(e, onImport) })
-      )
+      ),
+      isAdmin && React.createElement("p", { style: { color: "var(--ink-soft)", fontSize: 12, marginTop: 8 } }, "가져오기는 서버에 데이터가 하나도 없는 조직에서만 할 수 있습니다(조직 관리자 전용).")
     ),
     React.createElement(Card, { title: "회계 규정 참고", subtitle: "한수원노동조합 회계규정 주요 조항" },
       React.createElement("ul", { className: "rule-list" },
@@ -2793,6 +2772,7 @@ async function apiCall(path, { method = "GET", body } = {}) {
   }
   let json = null;
   try { json = await res.json(); } catch (e) {}
+  if (res.status === 401 && !path.startsWith("auth/")) window.dispatchEvent(new Event("khnp-session-expired"));
   if (!res.ok) {
     const err = new Error((json && json.error) || "요청을 처리하지 못했습니다.");
     err.status = res.status;
@@ -3260,6 +3240,12 @@ function App() {
     }
   }
   useEffect(() => { checkSession(); }, []);
+  // 다른 곳에서 로그아웃/만료되어 서버가 401을 돌려주면 로그인 화면으로 돌아간다.
+  useEffect(() => {
+    const onExpired = () => { setUser(null); setPhase("login"); };
+    window.addEventListener("khnp-session-expired", onExpired);
+    return () => window.removeEventListener("khnp-session-expired", onExpired);
+  }, []);
 
   async function logout() {
     try { await apiCall("auth/logout", { method: "POST" }); } catch (e) {}
@@ -3286,31 +3272,119 @@ function App() {
     );
   }
   if (user.role === "super") return React.createElement(SuperHome, { user, onLogout: logout });
-  return React.createElement(MainApp, { authUser: user, onLogout: logout });
+  return React.createElement(OrgApp, { authUser: user, onLogout: logout });
 }
 
-function MainApp({ authUser, onLogout }) {
+// 로그인 후: 서버에서 이 조직의 데이터를 받아온 다음 MainApp을 보여준다.
+function OrgApp({ authUser, onLogout }) {
+  const [state, setState] = useState({ phase: "loading", data: null, error: "", waking: false });
+  async function load() {
+    setState({ phase: "loading", data: null, error: "", waking: false });
+    try {
+      const r = await apiRetrying("data/load", {}, () => setState(s => ({ ...s, waking: true })));
+      setState({ phase: "ready", data: r.data, error: "", waking: false });
+    } catch (e) {
+      setState({ phase: "error", data: null, error: e.message, waking: false });
+    }
+  }
+  useEffect(() => { load(); }, []);
+
+  if (state.phase === "loading") {
+    return React.createElement(AuthShell, { title: "데이터를 불러오는 중..." },
+      state.waking && React.createElement("p", { className: "note-text" }, "데이터베이스를 깨우는 중입니다. 최대 1분 정도 걸릴 수 있어요.")
+    );
+  }
+  if (state.phase === "error") {
+    return React.createElement(AuthShell, { title: "데이터를 불러오지 못했습니다" },
+      React.createElement("p", { style: { color: "var(--danger)", fontSize: 13 } }, state.error),
+      React.createElement("div", { style: { display: "flex", gap: 8 } },
+        React.createElement(Btn, { variant: "primary", onClick: load }, "다시 시도"),
+        React.createElement(Btn, { onClick: onLogout }, "로그아웃")
+      )
+    );
+  }
+  return React.createElement(MainApp, { authUser, onLogout, initialData: state.data });
+}
+
+// 서버 도입 전에 이 PC 브라우저에 저장해 둔 데이터가 있으면 돌려준다(없거나 비어 있으면 null).
+function findLocalDataToMigrate() {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY);
+    if (!raw) return null;
+    const d = JSON.parse(raw);
+    const has = (d.vouchers && d.vouchers.length) || (d.contracts && d.contracts.length) || (d.fixedAssets && d.fixedAssets.length) || (d.budgets && Object.keys(d.budgets).length);
+    return has ? migrateData(d) : null;
+  } catch (e) { return null; }
+}
+
+const upsertVoucher = (prev, v) => ({ ...prev, vouchers: prev.vouchers.some(x => x.id === v.id) ? prev.vouchers.map(x => x.id === v.id ? v : x) : [...prev.vouchers, v] });
+
+function MainApp({ authUser, onLogout, initialData }) {
   const [pwOpen, setPwOpen] = useState(false);
-  const [data, setData] = useState(loadData);
+  const [data, setData] = useState(initialData);
   const [nav, setNav] = useState("dashboard");
   const [editingVoucher, setEditingVoucher] = useState(null);
-  const [selectedFY, setSelectedFY] = useState(() => data.currentFY);
+  const [selectedFY, setSelectedFY] = useState(() => initialData.currentFY);
   const [moreOpen, setMoreOpen] = useState(false);
-  const [saveStatus, setSaveStatus] = useState("saved"); // 'saved' | 'error'
+  const [saveStatus, setSaveStatus] = useState("saved"); // 'saved' | 'saving' | 'error'
   const [lastSavedAt, setLastSavedAt] = useState(null);
   const [menuClickTotal, setMenuClickTotal] = useState(0); // 사이드바 메뉴 클릭 수 합계(MongoDB 집계)
+  const [localData, setLocalData] = useState(() => authUser.role === "admin" ? findLocalDataToMigrate() : null);
   const isMobile = useIsMobile();
+  const inflight = useRef(0);
+  const budgetTimers = useRef({});
+  const budgetLatest = useRef({});
 
-  // 데이터가 바뀔 때마다 자동으로 이 PC의 브라우저 저장소에 저장한다.
-  useEffect(() => {
-    const ok = persistData(data);
-    if (ok) {
-      setSaveStatus("saved");
-      setLastSavedAt(new Date());
-    } else {
+  // 내 역할(화면 표시용). 실제 권한은 서버가 매 요청마다 다시 검사한다.
+  const role = authUser.role;
+  const isAdmin = role === "admin";
+  const canEdit = isAdmin || role === "accountant";
+  const isMine = v => v.createdBy === authUser.id;
+  const nextStepOf = v => (data.approvalSteps || []).find(s => !(v.approvals && v.approvals[s] && v.approvals[s].approved));
+  const isAutoVoucher = v => !!(v.isAutoGenerated || v.isDepreciationEntry || v.isClosingEntry);
+  const canApproveNow = v => role === "approver" && v.status === "pending" && !!authUser.approvalStep && nextStepOf(v) === authUser.approvalStep && !isMine(v);
+  const canEditVoucher = v => v.version === undefined ? canEdit : (canEdit && ["draft", "rejected"].includes(v.status) && (isAdmin || isMine(v)) && !isAutoVoucher(v));
+  const voucherPerms = {
+    canEdit, isAdmin, canApproveNow, canEditVoucher, nextStepOf,
+    canRecall: v => canEdit && v.status === "pending" && (isAdmin || isMine(v)),
+    canDelete: v => canEdit && ["draft", "rejected"].includes(v.status) && (isAdmin || isMine(v)) && !isAutoVoucher(v),
+    canRevoke: v => isAdmin && v.status === "approved" && !isAutoVoucher(v) && !(data.yearClosings && data.yearClosings[fyOfDate(v.date)]),
+  };
+
+  // 서버에 쓰기 요청을 보내고 저장 상태 표시를 갱신한다.
+  async function serverCall(path, body) {
+    inflight.current++; setSaveStatus("saving");
+    try {
+      const r = await apiRetrying(path, { method: "POST", body });
+      setSaveStatus("saved"); setLastSavedAt(new Date());
+      return r;
+    } catch (e) {
       setSaveStatus("error");
+      throw e;
+    } finally {
+      inflight.current--;
     }
-  }, [data]);
+  }
+
+  // 서버의 최신 데이터를 받아 화면을 맞춘다(내용이 같으면 그대로 둔다).
+  async function refresh(silent) {
+    try {
+      const r = await apiCall("data/load");
+      setData(prev => JSON.stringify(prev) === JSON.stringify(r.data) ? prev : r.data);
+    } catch (e) {
+      if (!silent) alert(e.message);
+    }
+  }
+
+  // 다른 사용자의 변경을 반영하기 위해 60초마다, 그리고 창으로 돌아올 때 새로 받는다(저장 중일 땐 건너뜀).
+  useEffect(() => {
+    const tick = () => {
+      if (document.visibilityState === "visible" && inflight.current === 0 && Object.keys(budgetTimers.current).length === 0) refresh(true);
+    };
+    const t = setInterval(tick, 60000);
+    window.addEventListener("focus", tick);
+    return () => { clearInterval(t); window.removeEventListener("focus", tick); };
+  }, []);
 
   // 페이지가 열릴 때 모든 메뉴(링크)의 현재 클릭 수를 한 번에 가져와 합계를 표시한다.
   // 값을 받기 전에는 0회로 보이고, 받으면 실제 값으로 갱신된다. 실패해도 화면 사용에는 지장이 없다.
@@ -3335,109 +3409,160 @@ function MainApp({ authUser, onLogout }) {
     label: `[${a.type === "income" ? "수입" : a.type === "expense" ? "지출" : a.type === "asset" ? "자산" : a.type === "liability" ? "부채" : "자본"}] ${a.fullName}`
   }));
 
-  function saveVoucher(v) {
-    setData(prev => {
-      const exists = prev.vouchers.find(x => x.id === v.id);
-      const vouchers = exists ? prev.vouchers.map(x => x.id === v.id ? v : x) : [...prev.vouchers, v];
-      return { ...prev, vouchers };
-    });
-    setEditingVoucher(null);
-    setNav("voucher");
+  // ----- 전표 (서버가 전표번호·상태·결재를 정한다) -----
+  async function saveVoucher(v) {
+    try {
+      const r = await serverCall("data/voucher_save", { voucher: v });
+      setData(prev => upsertVoucher(prev, r.voucher));
+      setEditingVoucher(null);
+      setNav("voucher");
+    } catch (e) {
+      alert(e.message);
+      if (e.status === 409) refresh(true);
+    }
   }
-
-  function approveVoucher(v) {
-    const approvals = {};
-    (data.approvalSteps || []).forEach(s => approvals[s] = { approved: true, at: new Date().toISOString() });
-    setData(prev => ({ ...prev, vouchers: prev.vouchers.map(x => x.id === v.id ? { ...x, status: "approved", approvals } : x) }));
+  async function approveVoucher(v) {
+    if (!confirm(`"${v.title || "제목없음"}" 전표를 [${authUser.approvalStep}] 단계에서 승인할까요?`)) return;
+    try {
+      const r = await serverCall("data/voucher_approve", { id: v.id, version: v.version });
+      setData(prev => upsertVoucher(prev, r.voucher));
+    } catch (e) { alert(e.message); refresh(true); }
   }
-
-  function deleteVoucher(v) {
+  async function rejectVoucher(v) {
+    const reason = prompt(`"${v.title || "제목없음"}" 전표를 반려합니다. 반려 사유를 입력해 주세요.`);
+    if (reason === null) return;
+    try {
+      const r = await serverCall("data/voucher_reject", { id: v.id, version: v.version, reason });
+      setData(prev => upsertVoucher(prev, r.voucher));
+    } catch (e) { alert(e.message); refresh(true); }
+  }
+  async function recallVoucher(v) {
+    if (!confirm(`"${v.title || "제목없음"}" 전표를 회수할까요? 지금까지의 결재는 초기화되고 임시저장 상태로 돌아갑니다.`)) return;
+    try {
+      const r = await serverCall("data/voucher_recall", { id: v.id });
+      setData(prev => upsertVoucher(prev, r.voucher));
+    } catch (e) { alert(e.message); refresh(true); }
+  }
+  async function revokeVoucher(v) {
+    const reason = prompt(`승인된 전표 "${v.title || "제목없음"}"의 승인을 취소합니다. 취소 사유를 입력해 주세요. (기록으로 남습니다)`);
+    if (reason === null) return;
+    try {
+      const r = await serverCall("data/voucher_revoke", { id: v.id, reason });
+      setData(prev => upsertVoucher(prev, r.voucher));
+    } catch (e) { alert(e.message); refresh(true); }
+  }
+  async function deleteVoucher(v) {
     if (!confirm(`"${v.title || "제목없음"}" 전표를 삭제할까요?`)) return;
-    setData(prev => ({ ...prev, vouchers: prev.vouchers.filter(x => x.id !== v.id) }));
+    try {
+      await serverCall("data/voucher_delete", { id: v.id });
+      setData(prev => ({ ...prev, vouchers: prev.vouchers.filter(x => x.id !== v.id) }));
+    } catch (e) { alert(e.message); refresh(true); }
   }
 
+  // ----- 예산 (입력은 바로 화면에 반영하고, 서버 저장은 입력이 멈춘 뒤 한 번만) -----
   function updateBudget(fyYear, budget) {
     setData(prev => ({ ...prev, budgets: { ...prev.budgets, [fyYear]: budget } }));
+    budgetLatest.current[fyYear] = budget;
+    clearTimeout(budgetTimers.current[fyYear]);
+    budgetTimers.current[fyYear] = setTimeout(async () => {
+      delete budgetTimers.current[fyYear];
+      try { await serverCall("data/record_save", { kind: "budget", id: String(fyYear), body: budgetLatest.current[fyYear] }); }
+      catch (e) { alert(e.message); refresh(true); }
+    }, 800);
   }
-  function addRevision(fyYear, rev) {
+  async function addRevision(fyYear, rev) {
     setData(prev => ({ ...prev, budgetRevisions: { ...prev.budgetRevisions, [fyYear]: [...(prev.budgetRevisions[fyYear] || []), rev] } }));
+    try { await serverCall("data/record_save", { kind: "budgetRevision", body: { fy: fyYear, rev } }); }
+    catch (e) { alert(e.message); refresh(true); }
   }
-  function addAsset(asset) {
+
+  // ----- 비품 / 계약 -----
+  async function addAsset(asset) {
     // 비품 등록 시 취득 전표를 자동 생성해 재무상태표의 자산으로 즉시 반영한다.
     // [차변: 집기비품(자산 증가)] / [대변: 선택한 결제수단(자산 감소 또는 미지급금 증가)]
-    setData(prev => {
-      const docNo = nextDocNo(prev.vouchers, asset.acquireDate);
-      const acquisitionVoucher = {
-        id: uid("v"),
-        docNo,
-        date: asset.acquireDate,
-        fy: fyLabel(asset.acquireDate),
-        title: `[자동생성] 비품 취득 - ${asset.name}`,
-        purpose: `기구비품대장 등록에 따른 자동 취득 전표 (내용연수 ${asset.usefulLifeYears}년, 잔존가치 ${fmtNum(asset.salvageValue || 0)}원)`,
-        department: "",
-        voucherType: "transfer",
-        lines: [
-          { id: uid("ln"), account: "bs-1108", debit: asset.price, credit: 0, note: `${asset.name} ${asset.qty}개 취득` },
-          { id: uid("ln"), account: asset.paymentAccount, debit: 0, credit: asset.price, note: "" },
-        ],
-        attachments: [],
-        approvals: {},
-        status: "approved",
-        isAutoGenerated: true,
-        linkedAssetId: asset.id,
-        createdAt: new Date().toISOString(),
-      };
-      return {
-        ...prev,
-        fixedAssets: [...prev.fixedAssets, { ...asset, acquisitionVoucherId: acquisitionVoucher.id }],
-        vouchers: [...prev.vouchers, acquisitionVoucher],
-      };
-    });
+    const acquisitionVoucher = {
+      id: uid("v"),
+      date: asset.acquireDate,
+      title: `[자동생성] 비품 취득 - ${asset.name}`,
+      purpose: `기구비품대장 등록에 따른 자동 취득 전표 (내용연수 ${asset.usefulLifeYears}년, 잔존가치 ${fmtNum(asset.salvageValue || 0)}원)`,
+      department: "",
+      voucherType: "transfer",
+      lines: [
+        { id: uid("ln"), account: "bs-1108", debit: asset.price, credit: 0, note: `${asset.name} ${asset.qty}개 취득` },
+        { id: uid("ln"), account: asset.paymentAccount, debit: 0, credit: asset.price, note: "" },
+      ],
+      attachments: [],
+      isAutoGenerated: true,
+      linkedAssetId: asset.id,
+      createdAt: new Date().toISOString(),
+    };
+    try {
+      const r = await serverCall("data/asset_add", { asset, voucher: acquisitionVoucher });
+      setData(prev => ({ ...prev, fixedAssets: [...prev.fixedAssets, r.asset], vouchers: [...prev.vouchers, r.voucher] }));
+    } catch (e) { alert(e.message); refresh(true); }
   }
-  function deleteAsset(id) {
-    // 비품 삭제 시 연결된 취득/감가상각 자동전표도 함께 삭제해 재무제표에 잔재가 남지 않게 한다.
-    setData(prev => ({
-      ...prev,
-      fixedAssets: prev.fixedAssets.filter(a => a.id !== id),
-      vouchers: prev.vouchers.filter(v => v.linkedAssetId !== id),
-    }));
+  async function deleteAsset(id) {
+    if (!confirm("이 비품을 삭제할까요? 연결된 취득·감가상각 자동 전표도 함께 삭제됩니다.")) return;
+    try {
+      await serverCall("data/asset_delete", { id });
+      setData(prev => ({ ...prev, fixedAssets: prev.fixedAssets.filter(a => a.id !== id), vouchers: prev.vouchers.filter(v => v.linkedAssetId !== id) }));
+    } catch (e) { alert(e.message); refresh(true); }
+  }
+  async function saveContract(c) {
+    try { await serverCall("data/record_save", { kind: "contract", body: c }); }
+    catch (e) { alert(e.message); refresh(true); }
   }
   function addContract(c) {
     setData(prev => ({ ...prev, contracts: [...prev.contracts, c] }));
+    saveContract(c);
   }
-  function deleteContract(id) {
+  async function deleteContract(id) {
     setData(prev => ({ ...prev, contracts: prev.contracts.filter(c => c.id !== id) }));
+    try { await serverCall("data/record_delete", { kind: "contract", id }); }
+    catch (e) { alert(e.message); refresh(true); }
   }
   function updateContract(id, patch) {
-    setData(prev => ({ ...prev, contracts: prev.contracts.map(c => c.id === id ? { ...c, ...patch } : c) }));
-  }
-  function handleImport(parsed) {
-    if (!confirm("현재 데이터를 백업 파일 내용으로 교체합니다. 계속할까요?")) return;
-    const migrated = migrateData(parsed);
-    setData(migrated);
-    setSelectedFY(migrated.currentFY || data.currentFY);
-    alert("백업 데이터를 불러왔습니다.");
+    const cur = data.contracts.find(c => c.id === id);
+    if (!cur) return;
+    const merged = { ...cur, ...patch };
+    setData(prev => ({ ...prev, contracts: prev.contracts.map(c => c.id === id ? merged : c) }));
+    saveContract(merged);
   }
 
-  function completeOnboarding({ orgType, orgName, approvalSteps }) {
-    setData(prev => ({ ...prev, orgSetupDone: true, orgType, orgName, approvalSteps, org: orgName }));
+  // ----- 백업 가져오기 / 이 PC의 기존 데이터를 서버로 옮기기 -----
+  async function handleImport(parsed) {
+    if (!confirm("이 백업 파일의 내용을 서버로 가져옵니다. 서버에 데이터가 하나도 없는 조직에서만 가능합니다. 계속할까요?")) return;
+    try {
+      const r = await serverCall("data/import", { data: parsed });
+      setData(r.data);
+      setSelectedFY(r.data.currentFY);
+      alert("백업 데이터를 서버로 가져왔습니다.");
+    } catch (e) { alert(e.message); }
+  }
+  async function migrateLocal() {
+    if (!confirm("이 PC 브라우저에 저장되어 있던 기존 데이터를 서버로 옮깁니다.\n\n- 옮기기 전에 백업 파일(.json)이 자동으로 내려받아집니다.\n- 서버로 옮기는 데 성공하면 이 PC에 남은 로컬 데이터는 삭제됩니다.\n\n계속할까요?")) return;
+    try {
+      downloadBackup(localData);
+      const r = await serverCall("data/import", { data: localData });
+      setData(r.data);
+      setSelectedFY(r.data.currentFY);
+      try { localStorage.removeItem(STORAGE_KEY); } catch (e) {}
+      setLocalData(null);
+      alert("기존 데이터를 서버로 옮겼습니다. (백업 파일은 다운로드 폴더에 있습니다)");
+    } catch (e) { alert(e.message); }
   }
 
-  function updateOrgSettings(patch) {
-    setData(prev => ({ ...prev, ...patch, org: patch.orgName || prev.orgName }));
-  }
-
-  function closeYear(fyYear) {
-    const { voucher, depreciationVouchers, summary } = closeYear_impl(data, fyYear);
-    setData(prev => ({
-      ...prev,
-      vouchers: [...prev.vouchers, ...depreciationVouchers, voucher],
-      yearClosings: { ...(prev.yearClosings || {}), [fyYear]: summary },
-      currentFY: Math.max(prev.currentFY, fyYear + 1),
-    }));
-    setSelectedFY(fyYear + 1);
-    const depNote = depreciationVouchers.length > 0 ? ` (비품 ${depreciationVouchers.length}건에 대한 감가상각비 자동 반영 포함)` : "";
-    alert(`${fyYear}회계연도 마감이 완료되었습니다. 수지차액 ${fmtNum(summary.net)}원이 ${fyYear + 1}회계연도로 이월되었습니다.${depNote}`);
+  // ----- 연도 마감 (마감 계산은 최신 서버 데이터로 한 뒤 서버가 한 트랜잭션으로 저장) -----
+  async function closeYear(fyYear) {
+    try {
+      const fresh = (await apiCall("data/load")).data;
+      const { voucher, depreciationVouchers, summary } = closeYear_impl(fresh, fyYear);
+      const r = await serverCall("data/year_close", { fyYear, vouchers: [...depreciationVouchers, voucher], summary });
+      setData(r.data);
+      setSelectedFY(fyYear + 1);
+      const depNote = depreciationVouchers.length > 0 ? ` (비품 ${depreciationVouchers.length}건에 대한 감가상각비 자동 반영 포함)` : "";
+      alert(`${fyYear}회계연도 마감이 완료되었습니다. 수지차액 ${fmtNum(summary.net)}원이 ${fyYear + 1}회계연도로 이월되었습니다.${depNote}`);
+    } catch (e) { alert(e.message); refresh(true); }
   }
 
   function goNav(key, voucher) {
@@ -3450,10 +3575,6 @@ function MainApp({ authUser, onLogout }) {
   // 조직 관리자에게만 "계정 관리" 메뉴가 보인다(서버에서도 같은 권한을 검사한다).
   const navItems = authUser.role === "admin" ? [...NAV_ITEMS, { key: "accounts", label: "계정 관리", icon: "users" }] : NAV_ITEMS;
   const navLabel = navItems.find(n => n.key === nav)?.label || "";
-
-  if (!data.orgSetupDone) {
-    return React.createElement(OnboardingScreen, { onComplete: completeOnboarding });
-  }
 
   const moreItems = navItems.filter(item => !MOBILE_TAB_KEYS.includes(item.key));
   const isMoreActive = moreItems.some(item => item.key === nav);
@@ -3482,8 +3603,10 @@ function MainApp({ authUser, onLogout }) {
         React.createElement("h1", null, navLabel),
         React.createElement("div", { className: "save-status", style: { marginLeft: "auto", marginRight: nav === "voucher" && editingVoucher ? 12 : 0 }, title: lastSavedAt ? `마지막 저장: ${lastSavedAt.toLocaleTimeString("ko-KR")}` : "" },
           saveStatus === "error"
-            ? React.createElement(Badge, { tone: "danger" }, "저장 실패 - 백업 필요")
-            : React.createElement(Badge, { tone: "ok" }, "이 PC에 자동 저장됨")
+            ? React.createElement(Badge, { tone: "danger" }, "서버 저장 실패")
+            : saveStatus === "saving"
+              ? React.createElement(Badge, { tone: "info" }, "저장 중...")
+              : React.createElement(Badge, { tone: "ok" }, "서버에 저장됨")
         ),
         React.createElement("div", { className: "user-chip" },
           !isMobile && React.createElement("span", { title: authUser.loginId }, `${authUser.displayName} · ${ROLE_LABELS[authUser.role] || authUser.role}`),
@@ -3493,26 +3616,32 @@ function MainApp({ authUser, onLogout }) {
         nav === "voucher" && editingVoucher && React.createElement(Btn, { variant: "ghost", size: "sm", onClick: () => setEditingVoucher(null) }, "목록으로")
       ),
       React.createElement("div", { className: "content" },
+        isAdmin && localData && data.vouchers.length === 0 && data.contracts.length === 0 && data.fixedAssets.length === 0 && Object.keys(data.budgets).length === 0 && React.createElement("div", { className: "note-text", style: { display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" } },
+          React.createElement("span", { style: { flex: 1, minWidth: 220 } }, "이 PC 브라우저에 서버 도입 전에 저장해 둔 기존 데이터가 있습니다. 서버로 옮기면 모든 담당자가 함께 사용할 수 있습니다."),
+          React.createElement(Btn, { variant: "primary", size: "sm", onClick: migrateLocal }, "기존 데이터를 서버로 옮기기")
+        ),
         nav === "dashboard" && React.createElement(DashboardScreen, { data, onNav: goNav, selectedFY, onChangeFY: setSelectedFY }),
         nav === "voucher" && (editingVoucher
           ? React.createElement(VoucherForm, {
               data, voucher: editingVoucher, accountOptions,
+              readOnly: !canEditVoucher(editingVoucher),
               onSave: saveVoucher, onCancel: () => setEditingVoucher(null)
             })
           : React.createElement(VoucherList, {
-              data, onNew: () => setEditingVoucher(newVoucher(data, "expense")),
-              onEdit: v => setEditingVoucher(v), onApprove: approveVoucher, onDelete: deleteVoucher
+              data, perms: voucherPerms, onNew: () => setEditingVoucher(newVoucher(data, "expense")),
+              onEdit: v => setEditingVoucher(v), onApprove: approveVoucher, onReject: rejectVoucher,
+              onRecall: recallVoucher, onRevoke: revokeVoucher, onDelete: deleteVoucher
             })
         ),
         nav === "ledger" && React.createElement(LedgerScreen, { data }),
-        nav === "budget" && React.createElement(BudgetScreen, { data, onUpdateBudget: updateBudget, onAddRevision: addRevision }),
+        nav === "budget" && React.createElement(BudgetScreen, { data, canEdit: isAdmin, onUpdateBudget: updateBudget, onAddRevision: addRevision }),
         nav === "reports" && React.createElement(ReportsScreen, { data }),
         nav === "search" && React.createElement(SearchScreen, { data }),
-        nav === "asset" && React.createElement(AssetScreen, { data, onAdd: addAsset, onDelete: deleteAsset }),
-        nav === "contract" && React.createElement(ContractScreen, { data, onAdd: addContract, onDelete: deleteContract, onUpdateContract: updateContract }),
-        nav === "yearend" && React.createElement(YearEndScreen, { data, onCloseYear: closeYear, onNavBudget: () => setNav("budget") }),
+        nav === "asset" && React.createElement(AssetScreen, { data, canEdit, canDelete: isAdmin, onAdd: addAsset, onDelete: deleteAsset }),
+        nav === "contract" && React.createElement(ContractScreen, { data, canEdit, onAdd: addContract, onDelete: deleteContract, onUpdateContract: updateContract }),
+        nav === "yearend" && React.createElement(YearEndScreen, { data, canClose: isAdmin, onCloseYear: closeYear, onNavBudget: () => setNav("budget") }),
         nav === "accounts" && authUser.role === "admin" && React.createElement(AccountsScreen, { me: authUser }),
-        nav === "settings" && React.createElement(SettingsScreen, { data, onImport: handleImport, onUpdateOrg: updateOrgSettings, saveStatus, menuClickTotal }),
+        nav === "settings" && React.createElement(SettingsScreen, { data, isAdmin, onImport: handleImport, saveStatus, menuClickTotal }),
       )
     ),
 
