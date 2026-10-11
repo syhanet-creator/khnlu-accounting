@@ -2,7 +2,9 @@
   "name": "khnp-accounting",
   "version": "1.0.0",
   "private": true,
+  "engines": { "node": "22.x" },
   "dependencies": {
-    "mongodb": "^6.10.0"
+    "mongodb": "^6.10.0",
+    "mssql": "^11.0.1"
   }
 }

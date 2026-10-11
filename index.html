@@ -398,6 +398,7 @@ body {
   justify-content: space-between; padding: 0 24px; background: #fff; flex-shrink: 0;
 }
 .topbar h1 { font-size: 17px; margin: 0; font-weight: 700; }
+.user-chip { display: flex; align-items: center; gap: 6px; margin-left: 12px; font-size: 12.5px; color: var(--ink-soft); white-space: nowrap; }
 .content { padding: 24px; flex: 1; min-height: 0; overflow-y: auto; -webkit-overflow-scrolling: touch; overscroll-behavior-y: contain; }
 
 /* Buttons */
@@ -2771,7 +2772,250 @@ function useIsMobile() {
   return isMobile;
 }
 
+// ===== 서버 연동 · 로그인 =====
+// 권한 검사는 전부 서버(/api)가 한다. 이 화면 코드는 로그인/로그아웃과 안내만 담당한다.
+const ROLE_LABELS = { super: "시스템관리자", admin: "조직관리자", accountant: "회계담당", approver: "결재자", viewer: "조회전용" };
+
+async function apiCall(path, { method = "GET", body } = {}) {
+  let res;
+  try {
+    res = await fetch("/api/" + path, {
+      method,
+      credentials: "same-origin",
+      headers: method === "GET" ? {} : { "Content-Type": "application/json" },
+      body: method === "GET" ? undefined : JSON.stringify(body || {}),
+    });
+  } catch (e) {
+    const err = new Error("서버에 연결할 수 없습니다. 인터넷 연결을 확인해 주세요.");
+    err.network = true;
+    throw err;
+  }
+  let json = null;
+  try { json = await res.json(); } catch (e) {}
+  if (!res.ok) {
+    const err = new Error((json && json.error) || "요청을 처리하지 못했습니다.");
+    err.status = res.status;
+    err.code = json && json.code;
+    throw err;
+  }
+  return json;
+}
+
+// 무료 서버리스 DB가 일시중지에서 깨어나는 동안(수십 초) 자동으로 다시 시도한다.
+async function apiRetrying(path, opts, onWaking) {
+  for (let i = 0; ; i++) {
+    try {
+      return await apiCall(path, opts);
+    } catch (e) {
+      if (e.code === "db_waking" && i < 5) {
+        if (onWaking) onWaking();
+        await new Promise(r => setTimeout(r, 4000));
+        continue;
+      }
+      throw e;
+    }
+  }
+}
+
+function AuthShell({ title, children, note }) {
+  return React.createElement("div", { className: "onboarding-wrap" },
+    React.createElement("div", { className: "onboarding-card" },
+      React.createElement("h2", null, title),
+      note && React.createElement("p", { className: "note-text" }, note),
+      children
+    )
+  );
+}
+
+function LoginScreen({ onLoggedIn }) {
+  const [loginId, setLoginId] = useState("");
+  const [password, setPassword] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [waking, setWaking] = useState(false);
+  const [error, setError] = useState("");
+
+  async function submit() {
+    if (busy || !loginId.trim() || !password) return;
+    setBusy(true); setError(""); setWaking(false);
+    try {
+      const r = await apiRetrying("auth/login", { method: "POST", body: { loginId: loginId.trim(), password } }, () => setWaking(true));
+      setPassword("");
+      onLoggedIn(r.user);
+    } catch (e) {
+      setError(e.message);
+    } finally {
+      setBusy(false); setWaking(false);
+    }
+  }
+
+  return React.createElement(AuthShell, { title: "한수원노동조합 회계관리 시스템" },
+    React.createElement("form", { onSubmit: e => { e.preventDefault(); submit(); } },
+      React.createElement(Field, { label: "아이디" },
+        React.createElement("input", { className: "kinput", name: "loginId", autoComplete: "username", autoFocus: true, value: loginId, onChange: e => setLoginId(e.target.value), maxLength: 50 })
+      ),
+      React.createElement(Field, { label: "비밀번호" },
+        React.createElement("input", { className: "kinput", type: "password", name: "password", autoComplete: "current-password", value: password, onChange: e => setPassword(e.target.value), maxLength: 128 })
+      ),
+      error && React.createElement("p", { style: { color: "var(--danger)", fontSize: 13, margin: "8px 0 0" } }, error),
+      waking && React.createElement("p", { className: "note-text", style: { marginTop: 10 } }, "데이터베이스를 깨우는 중입니다. 최대 1분 정도 걸릴 수 있어요. 잠시만 기다려 주세요."),
+      React.createElement("div", { style: { marginTop: 18 } },
+        React.createElement(Btn, { variant: "primary", type: "submit", disabled: busy || !loginId.trim() || !password }, busy ? "로그인 중..." : "로그인")
+      ),
+      React.createElement("p", { style: { color: "var(--ink-soft)", fontSize: 12, marginTop: 14 } }, "계정은 조직 관리자가 발급합니다. 비밀번호를 잊었으면 관리자에게 초기화를 요청하세요.")
+    )
+  );
+}
+
+// 최초 1회: 서버 환경변수의 설정 토큰을 아는 사람이 첫 시스템관리자 계정을 만든다.
+function BootstrapScreen({ onDone }) {
+  const [f, setF] = useState({ token: "", loginId: "", displayName: "", password: "", password2: "" });
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  const set = (k, v) => setF(prev => ({ ...prev, [k]: v }));
+
+  async function submit() {
+    if (busy) return;
+    if (f.password !== f.password2) { setError("비밀번호 확인이 일치하지 않습니다."); return; }
+    setBusy(true); setError("");
+    try {
+      await apiRetrying("auth/bootstrap", { method: "POST", body: { token: f.token.trim(), loginId: f.loginId.trim(), displayName: f.displayName.trim(), password: f.password } });
+      alert("시스템관리자 계정이 만들어졌습니다. 이제 로그인해 주세요.");
+      onDone();
+    } catch (e) {
+      setError(e.message);
+    } finally {
+      setBusy(false);
+    }
+  }
+  const ok = f.token && f.loginId && f.displayName && f.password && f.password2;
+
+  return React.createElement(AuthShell, { title: "최초 설정", note: "아직 계정이 하나도 없습니다. 서버에 등록한 설정 토큰(BOOTSTRAP_TOKEN)을 입력해 첫 시스템관리자 계정을 만드세요. 이 화면은 계정이 만들어지면 다시 나타나지 않습니다." },
+    React.createElement("form", { onSubmit: e => { e.preventDefault(); submit(); } },
+      React.createElement(Field, { label: "설정 토큰", required: true },
+        React.createElement("input", { className: "kinput", type: "password", autoComplete: "off", value: f.token, onChange: e => set("token", e.target.value) })
+      ),
+      React.createElement(Field, { label: "아이디", required: true, hint: "영문·숫자·. _ - 3~50자" },
+        React.createElement("input", { className: "kinput", autoComplete: "username", value: f.loginId, onChange: e => set("loginId", e.target.value), maxLength: 50 })
+      ),
+      React.createElement(Field, { label: "이름", required: true },
+        React.createElement("input", { className: "kinput", value: f.displayName, onChange: e => set("displayName", e.target.value), maxLength: 50 })
+      ),
+      React.createElement(Field, { label: "비밀번호", required: true, hint: "10자 이상, 영문과 숫자 포함, 아이디 포함 불가" },
+        React.createElement("input", { className: "kinput", type: "password", autoComplete: "new-password", value: f.password, onChange: e => set("password", e.target.value), maxLength: 128 })
+      ),
+      React.createElement(Field, { label: "비밀번호 확인", required: true },
+        React.createElement("input", { className: "kinput", type: "password", autoComplete: "new-password", value: f.password2, onChange: e => set("password2", e.target.value), maxLength: 128 })
+      ),
+      error && React.createElement("p", { style: { color: "var(--danger)", fontSize: 13, margin: "8px 0 0" } }, error),
+      React.createElement("div", { style: { marginTop: 18 } },
+        React.createElement(Btn, { variant: "primary", type: "submit", disabled: busy || !ok }, busy ? "만드는 중..." : "관리자 계정 만들기")
+      )
+    )
+  );
+}
+
+function PasswordForm({ onDone, onCancel }) {
+  const [cur, setCur] = useState("");
+  const [pw, setPw] = useState("");
+  const [pw2, setPw2] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+
+  async function submit() {
+    if (busy) return;
+    if (pw !== pw2) { setError("새 비밀번호 확인이 일치하지 않습니다."); return; }
+    setBusy(true); setError("");
+    try {
+      const r = await apiRetrying("auth/password", { method: "POST", body: { currentPassword: cur, newPassword: pw } });
+      onDone(r.user);
+    } catch (e) {
+      setError(e.message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return React.createElement("form", { onSubmit: e => { e.preventDefault(); submit(); } },
+    React.createElement(Field, { label: "현재 비밀번호", required: true },
+      React.createElement("input", { className: "kinput", type: "password", autoComplete: "current-password", autoFocus: true, value: cur, onChange: e => setCur(e.target.value), maxLength: 128 })
+    ),
+    React.createElement(Field, { label: "새 비밀번호", required: true, hint: "10자 이상, 영문과 숫자 포함, 아이디 포함 불가" },
+      React.createElement("input", { className: "kinput", type: "password", autoComplete: "new-password", value: pw, onChange: e => setPw(e.target.value), maxLength: 128 })
+    ),
+    React.createElement(Field, { label: "새 비밀번호 확인", required: true },
+      React.createElement("input", { className: "kinput", type: "password", autoComplete: "new-password", value: pw2, onChange: e => setPw2(e.target.value), maxLength: 128 })
+    ),
+    error && React.createElement("p", { style: { color: "var(--danger)", fontSize: 13, margin: "8px 0 0" } }, error),
+    React.createElement("div", { style: { marginTop: 18, display: "flex", gap: 8, justifyContent: "flex-end" } },
+      onCancel && React.createElement(Btn, { onClick: onCancel }, "취소"),
+      React.createElement(Btn, { variant: "primary", type: "submit", disabled: busy || !cur || !pw || !pw2 }, busy ? "변경 중..." : "비밀번호 변경")
+    )
+  );
+}
+
+// 시스템관리자는 조직 데이터를 볼 수 없다(조직·계정 관리 전용). 관리 화면은 다음 단계에서 추가된다.
+function SuperHome({ user, onLogout }) {
+  return React.createElement(AuthShell, { title: "시스템관리자", note: `${user.displayName}님으로 로그인되었습니다. 조직과 조직 관리자 계정을 만드는 화면은 다음 단계에서 추가됩니다.` },
+    React.createElement(Btn, { onClick: onLogout }, "로그아웃")
+  );
+}
+
 function App() {
+  const [phase, setPhase] = useState("loading"); // loading | login | bootstrap | ready | error
+  const [user, setUser] = useState(null);
+  const [waking, setWaking] = useState(false);
+  const [loadError, setLoadError] = useState("");
+
+  async function checkSession() {
+    setPhase("loading"); setLoadError("");
+    try {
+      const me = await apiRetrying("auth/me", {}, () => setWaking(true));
+      setUser(me.user); setPhase("ready");
+    } catch (e) {
+      if (e.status === 401) {
+        try {
+          const st = await apiRetrying("auth/status", {}, () => setWaking(true));
+          setPhase(st.needsBootstrap ? "bootstrap" : "login");
+        } catch (e2) { setLoadError(e2.message); setPhase("error"); }
+      } else {
+        setLoadError(e.message); setPhase("error");
+      }
+    } finally {
+      setWaking(false);
+    }
+  }
+  useEffect(() => { checkSession(); }, []);
+
+  async function logout() {
+    try { await apiCall("auth/logout", { method: "POST" }); } catch (e) {}
+    setUser(null); setPhase("login");
+  }
+
+  if (phase === "loading") {
+    return React.createElement(AuthShell, { title: "불러오는 중..." },
+      waking && React.createElement("p", { className: "note-text" }, "데이터베이스를 깨우는 중입니다. 최대 1분 정도 걸릴 수 있어요.")
+    );
+  }
+  if (phase === "error") {
+    return React.createElement(AuthShell, { title: "연결할 수 없습니다" },
+      React.createElement("p", { style: { color: "var(--danger)", fontSize: 13 } }, loadError),
+      React.createElement(Btn, { variant: "primary", onClick: checkSession }, "다시 시도")
+    );
+  }
+  if (phase === "bootstrap") return React.createElement(BootstrapScreen, { onDone: () => setPhase("login") });
+  if (phase === "login" || !user) return React.createElement(LoginScreen, { onLoggedIn: u => { setUser(u); setPhase("ready"); } });
+
+  if (user.mustChangePassword) {
+    return React.createElement(AuthShell, { title: "비밀번호를 변경해 주세요", note: "관리자가 발급한 임시 비밀번호입니다. 계속하려면 본인만 아는 새 비밀번호로 바꿔야 합니다." },
+      React.createElement(PasswordForm, { onDone: u => setUser(u) })
+    );
+  }
+  if (user.role === "super") return React.createElement(SuperHome, { user, onLogout: logout });
+  return React.createElement(MainApp, { authUser: user, onLogout: logout });
+}
+
+function MainApp({ authUser, onLogout }) {
+  const [pwOpen, setPwOpen] = useState(false);
   const [data, setData] = useState(loadData);
   const [nav, setNav] = useState("dashboard");
   const [editingVoucher, setEditingVoucher] = useState(null);
@@ -2964,6 +3208,11 @@ function App() {
             ? React.createElement(Badge, { tone: "danger" }, "저장 실패 - 백업 필요")
             : React.createElement(Badge, { tone: "ok" }, "이 PC에 자동 저장됨")
         ),
+        React.createElement("div", { className: "user-chip" },
+          !isMobile && React.createElement("span", { title: authUser.loginId }, `${authUser.displayName} · ${ROLE_LABELS[authUser.role] || authUser.role}`),
+          !isMobile && React.createElement(Btn, { variant: "ghost", size: "sm", onClick: () => setPwOpen(true) }, "비밀번호 변경"),
+          React.createElement(Btn, { variant: "ghost", size: "sm", onClick: onLogout }, "로그아웃")
+        ),
         nav === "voucher" && editingVoucher && React.createElement(Btn, { variant: "ghost", size: "sm", onClick: () => setEditingVoucher(null) }, "목록으로")
       ),
       React.createElement("div", { className: "content" },
@@ -3007,7 +3256,14 @@ function App() {
       open: moreOpen, onClose: () => setMoreOpen(false), items: moreItems, activeKey: nav,
       onSelect: key => goNav(key),
       fy: data.currentFY
-    })
+    }),
+
+    React.createElement(Modal, { open: pwOpen, onClose: () => setPwOpen(false), title: "비밀번호 변경" },
+      pwOpen && React.createElement(PasswordForm, {
+        onDone: () => { setPwOpen(false); alert("비밀번호가 변경되었습니다. 다른 기기의 로그인은 모두 종료됩니다."); },
+        onCancel: () => setPwOpen(false)
+      })
+    )
   );
 }
 
