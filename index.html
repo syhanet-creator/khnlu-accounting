@@ -1353,43 +1353,101 @@ function hasDesktopApi() {
   return typeof window !== "undefined" && !!window.pywebview && !!window.pywebview.api;
 }
 
-// 회계결의서 증빙 / 계약서 등 첨부파일 관리 (실행 파일(EXE) 버전에서만 동작 - 로컬 PC 파일시스템 접근 필요)
-// category: 'voucher' | 'contract' — entityId별로 하위 폴더를 나눠 저장한다.
+// 회계결의서 증빙 / 계약서 등 첨부파일 관리.
+// 새 첨부는 서버(Azure Blob)에 저장되어 웹·안드로이드 앱·PC 프로그램 어디서든 열 수 있다.
+// 예전 PC 프로그램(EXE)에서 이 PC에만 저장했던 첨부(path)는 그 PC의 프로그램에서만 열린다.
+const ATTACH_EXTS = ["pdf", "jpg", "jpeg", "png", "webp", "heic", "hwp", "hwpx", "doc", "docx", "xls", "xlsx", "ppt", "pptx"];
+const ATTACH_ACCEPT = ".pdf,.jpg,.jpeg,.png,.webp,.heic,.hwp,.hwpx,.doc,.docx,.xls,.xlsx,.ppt,.pptx,image/*";
+const ATTACH_MAX_BYTES = 20 * 1024 * 1024;
+
+// 큰 사진은 올리기 전에 줄여 저장 공간과 올리는 시간을 아낀다(실패하면 원본 그대로 올린다).
+async function shrinkImage(file) {
+  if (!/^image\/(jpeg|png|webp)$/.test(file.type) || file.size < 1.5 * 1024 * 1024) return file;
+  try {
+    const bmp = await createImageBitmap(file);
+    const scale = Math.min(1, 2400 / Math.max(bmp.width, bmp.height));
+    const c = document.createElement("canvas");
+    c.width = Math.round(bmp.width * scale); c.height = Math.round(bmp.height * scale);
+    c.getContext("2d").drawImage(bmp, 0, 0, c.width, c.height);
+    const blob = await new Promise(r => c.toBlob(r, "image/jpeg", 0.85));
+    if (!blob || blob.size >= file.size) return file;
+    return new File([blob], file.name.replace(/\.[^.]+$/, "") + ".jpg", { type: "image/jpeg" });
+  } catch (e) { return file; }
+}
+
+// 서버에서 한 파일용 임시 업로드 주소를 받아 Blob에 직접 올린다.
+async function uploadEvidence(category, entityId, file) {
+  const f = await shrinkImage(file);
+  const meta = await apiRetrying("files/upload_url", { method: "POST", body: { category, entityId: String(entityId), name: f.name, size: f.size } });
+  let put;
+  try { put = await fetch(meta.uploadUrl, { method: "PUT", headers: meta.headers, body: f }); }
+  catch (e) { throw new Error("저장소에 연결할 수 없습니다. 인터넷 연결을 확인해 주세요."); }
+  if (!put.ok) throw new Error(`파일을 올리지 못했습니다. (저장소 응답 ${put.status})`);
+  return meta.attachment;
+}
+
 function AttachmentManager({ category, entityId, attachments, onChange, readOnly }) {
   const [busy, setBusy] = useState(false);
+  const [progress, setProgress] = useState("");
   const list = attachments || [];
+  const fileRef = useRef(null);
+  const camRef = useRef(null);
+  const uploadedHere = useRef(new Set()); // 이번 작성 중 새로 올린 파일 (저장 전에 지우면 서버에서도 바로 삭제)
+  const isTouch = typeof navigator !== "undefined" && navigator.maxTouchPoints > 0;
 
-  async function handleAdd() {
-    if (!hasDesktopApi()) {
-      alert("증빙/첨부파일 기능은 실행 파일(EXE) 버전에서만 사용할 수 있습니다.");
-      return;
-    }
+  async function handleFiles(fileList) {
+    const files = Array.from(fileList || []);
+    if (!files.length) return;
     setBusy(true);
+    let next = [...list];
     try {
-      const added = await window.pywebview.api.pick_and_attach(category, String(entityId));
-      if (added && added.length) onChange([...list, ...added]);
-    } catch (e) {
-      alert("파일을 첨부하는 중 오류가 발생했습니다.");
+      for (let i = 0; i < files.length; i++) {
+        const file = files[i];
+        const ext = (file.name.split(".").pop() || "").toLowerCase();
+        if (!ATTACH_EXTS.includes(ext)) { alert(`"${file.name}"은(는) 첨부할 수 없는 형식입니다. (PDF, 사진, 한글·워드·엑셀·파워포인트 파일만 가능)`); continue; }
+        if (file.size > ATTACH_MAX_BYTES) { alert(`"${file.name}" 파일이 너무 큽니다. (최대 ${fmtFileSize(ATTACH_MAX_BYTES)})`); continue; }
+        setProgress(`${i + 1}/${files.length} 올리는 중...`);
+        try {
+          const att = await uploadEvidence(category, entityId, file);
+          uploadedHere.current.add(att.blob);
+          next = [...next, att];
+          onChange(next);
+        } catch (e) {
+          alert(`"${file.name}" 올리기에 실패했습니다.\n${e.message}`);
+        }
+      }
     } finally {
-      setBusy(false);
+      setBusy(false); setProgress("");
     }
   }
 
   async function handleOpen(a) {
-    if (!hasDesktopApi()) return;
+    if (a.blob) {
+      try {
+        const r = await apiRetrying("files/download_url", { method: "POST", body: { blob: a.blob, name: a.name } });
+        const el = document.createElement("a");
+        el.href = r.url; el.target = "_blank"; el.rel = "noopener";
+        document.body.appendChild(el); el.click(); el.remove();
+      } catch (e) { alert(e.message); }
+      return;
+    }
+    // 예전 PC 프로그램에서 이 PC에만 저장한 첨부
+    if (!hasDesktopApi()) { alert("이 첨부는 예전 PC 프로그램에서 해당 PC에만 저장된 파일이라, PC 프로그램(EXE)에서만 열 수 있습니다."); return; }
     let ok = false;
     try { ok = await window.pywebview.api.open_attachment(a.path); } catch (e) {}
     if (!ok) alert("이 PC에서 파일을 찾을 수 없습니다. 다른 PC에서 첨부한 파일이거나 이동·삭제된 파일일 수 있습니다.");
   }
 
-  function handlePrintOne(a) {
-    if (!hasDesktopApi()) return;
-    window.pywebview.api.print_files([a.path]);
-  }
-
-  function handleRemove(a) {
-    if (!confirm(`"${a.name}" 파일을 목록에서 삭제할까요? (PC에 저장된 파일도 함께 삭제됩니다)`)) return;
-    if (hasDesktopApi()) window.pywebview.api.remove_attachment(a.path);
+  async function handleRemove(a) {
+    if (!confirm(`"${a.name}" 파일을 첨부 목록에서 삭제할까요?`)) return;
+    if (a.blob) {
+      if (uploadedHere.current.has(a.blob)) {
+        try { await apiRetrying("files/delete", { method: "POST", body: { blob: a.blob } }); uploadedHere.current.delete(a.blob); }
+        catch (e) { alert(e.message); return; }
+      }
+    } else if (hasDesktopApi() && a.path) {
+      window.pywebview.api.remove_attachment(a.path);
+    }
     onChange(list.filter(x => x.id !== a.id));
   }
 
@@ -1401,16 +1459,18 @@ function AttachmentManager({ category, entityId, attachments, onChange, readOnly
             React.createElement(Icon, { name: "file", size: 14 }),
             React.createElement("span", { className: "attach-name", onClick: () => handleOpen(a), title: "클릭하면 파일이 열립니다" }, a.name),
             React.createElement("span", { className: "attach-size" }, fmtFileSize(a.size)),
+            !a.blob && React.createElement("span", { className: "attach-size", title: "예전 PC 프로그램에서 이 PC에만 저장된 파일" }, "(PC 전용)"),
             !readOnly && React.createElement("div", { className: "attach-actions-row" },
-              React.createElement("button", { className: "icon-btn", title: "이 파일만 인쇄", onClick: () => handlePrintOne(a) }, React.createElement(Icon, { name: "print", size: 13 })),
-              React.createElement("button", { className: "icon-btn danger", title: "삭제", onClick: () => handleRemove(a) }, React.createElement(Icon, { name: "trash", size: 13 }))
+              React.createElement("button", { className: "icon-btn danger", title: "삭제", onClick: () => handleRemove(a), disabled: busy }, React.createElement(Icon, { name: "trash", size: 13 }))
             )
           ))
     ),
-    !readOnly && React.createElement("div", { className: "attach-add-btn" },
-      React.createElement(Btn, {
-        variant: "outline", size: "sm", icon: "attach", onClick: handleAdd, disabled: busy
-      }, busy ? "추가 중..." : "+ 추가 (PDF)")
+    !readOnly && React.createElement("div", { className: "attach-add-btn", style: { display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" } },
+      React.createElement(Btn, { variant: "outline", size: "sm", icon: "attach", onClick: () => fileRef.current && fileRef.current.click(), disabled: busy }, busy ? (progress || "올리는 중...") : "+ 파일 추가"),
+      isTouch && React.createElement(Btn, { variant: "outline", size: "sm", onClick: () => camRef.current && camRef.current.click(), disabled: busy }, "사진 촬영"),
+      React.createElement("input", { type: "file", multiple: true, accept: ATTACH_ACCEPT, ref: fileRef, style: { display: "none" }, onChange: e => { handleFiles(e.target.files); e.target.value = ""; } }),
+      React.createElement("input", { type: "file", accept: "image/*", capture: "environment", ref: camRef, style: { display: "none" }, onChange: e => { handleFiles(e.target.files); e.target.value = ""; } }),
+      React.createElement("span", { style: { color: "var(--ink-soft)", fontSize: 11.5 } }, "PDF·사진 등 20MB 이하")
     )
   );
 }
@@ -1802,8 +1862,7 @@ function VoucherForm({ data, voucher, readOnly, onChange, onSave, onCancel, acco
   useEffect(() => setV(voucher), [voucher.id]);
 
   function update(patch) {
-    const nv = { ...v, ...patch };
-    setV(nv);
+    setV(prev => ({ ...prev, ...patch }));
   }
   function updateLine(idx, patch) {
     const lines = v.lines.map((l, i) => i === idx ? { ...l, ...patch } : l);
@@ -1931,7 +1990,7 @@ function VoucherForm({ data, voucher, readOnly, onChange, onSave, onCancel, acco
         React.createElement(Field, { label: "증빙첨부 메모", hint: "영수증/견적서 등 실물 증빙은 별도 보관, 여기엔 메모만 기록" },
           React.createElement("input", { className: "kinput", value: v.attachNote || "", onChange: e => update({ attachNote: e.target.value }) })),
       ),
-      React.createElement(Field, { label: "증빙 파일 (PDF)", hint: "영수증/세금계산서 등 증빙 PDF를 여러 개 첨부할 수 있습니다" },
+      React.createElement(Field, { label: "증빙 파일", hint: "영수증·세금계산서 등 PDF나 사진(폰에서는 바로 촬영)을 여러 개 첨부할 수 있습니다" },
         React.createElement(AttachmentManager, {
           category: "voucher", entityId: v.id, attachments: v.attachments, readOnly: !!readOnly,
           onChange: next => update({ attachments: next })
@@ -1975,9 +2034,9 @@ function VoucherPrintActions({ voucher, onCancel, onSave, balanced, readOnly }) 
   return React.createElement("div", { className: "voucher-actions" },
     React.createElement(Btn, { variant: "ghost", onClick: onCancel }, readOnly ? "닫기" : "취소"),
     React.createElement(Btn, { variant: "outline", icon: "print", onClick: printOnly }, "인쇄(서명용)"),
-    attachments.length > 0 && React.createElement(Btn, {
+    hasDesktopApi() && attachments.some(a => a.path) && React.createElement(Btn, {
       variant: "outline", icon: "print", onClick: printWithAttachments
-    }, `증빙 포함 일괄인쇄 (${attachments.length})`),
+    }, `증빙 포함 일괄인쇄 (${attachments.filter(a => a.path).length})`),
     !readOnly && React.createElement(Btn, { variant: "outline", onClick: () => onSave({ ...voucher, status: "draft" }) }, "임시저장"),
     !readOnly && React.createElement(Btn, { variant: "primary", disabled: !balanced || !voucher.title, onClick: () => onSave({ ...voucher, status: "pending" }) }, "결재상신")
   );
@@ -2640,10 +2699,10 @@ function ContractScreen({ data, canEdit, onAdd, onDelete, onUpdateContract }) {
         React.createElement(Field, { label: "시작일" }, React.createElement("input", { type: "date", className: "kinput", value: modal.startDate, onChange: e => setModal({ ...modal, startDate: e.target.value }) })),
         React.createElement(Field, { label: "종료일" }, React.createElement("input", { type: "date", className: "kinput", value: modal.endDate, onChange: e => setModal({ ...modal, endDate: e.target.value }) })),
         React.createElement(Field, { label: "비고" }, React.createElement("input", { className: "kinput", value: modal.note, onChange: e => setModal({ ...modal, note: e.target.value }) })),
-        React.createElement(Field, { label: "계약서 파일 (PDF)", hint: "계약서 등 관련 문서를 여러 개 첨부할 수 있습니다" },
+        React.createElement(Field, { label: "계약서 파일", hint: "계약서 PDF·사진·한글 문서 등을 여러 개 첨부할 수 있습니다" },
           React.createElement(AttachmentManager, {
             category: "contract", entityId: modal.id, attachments: modal.attachments,
-            onChange: next => setModal({ ...modal, attachments: next })
+            onChange: next => setModal(m => ({ ...m, attachments: next }))
           })),
         React.createElement("div", { className: "voucher-actions" },
           React.createElement(Btn, { variant: "ghost", onClick: () => setModal(null) }, "취소"),
@@ -2684,7 +2743,7 @@ function SettingsScreen({ data, isAdmin, onImport, saveStatus, menuClickTotal })
     React.createElement(Card, { title: "데이터 백업 / 복원" },
       saveStatus === "error" && React.createElement("p", { className: "note-text", style: { color: "var(--danger)", fontWeight: 600 } }, "⚠ 서버 저장에 실패했습니다. 인터넷 연결을 확인한 뒤 새로고침해 서버의 최신 상태를 확인하세요. 필요하면 지금 백업 파일을 내려받아 두세요."),
       React.createElement("p", { className: "note-text" }, "이 프로그램의 데이터는 서버(Azure SQL 데이터베이스)에 저장되며, 로그인한 담당자 모두가 같은 데이터를 봅니다. 별도 보관용으로 주기적으로(예: 매일 업무 종료 후) 백업 파일(JSON)을 내려받아 두시길 권장합니다."),
-      React.createElement("p", { className: "note-text" }, "증빙 PDF 첨부는 PC 설치 프로그램(EXE 서버판)에서만 사용할 수 있습니다. 첨부한 파일 자체는 첨부한 PC에만 저장되고, 서버에는 파일 이름 정보만 기록되어 다른 PC에서는 열 수 없습니다."),
+      React.createElement("p", { className: "note-text" }, "증빙 파일(PDF·사진 등)은 서버의 비공개 저장소(Azure Blob)에 저장되어, 웹·안드로이드 앱·PC 프로그램에서 모두 열 수 있습니다. 백업 파일(JSON)에는 파일 이름 정보만 들어가고 파일 자체는 포함되지 않습니다."),
       React.createElement("div", { style: { display: "flex", gap: 10, marginTop: 12, flexWrap: "wrap" } },
         React.createElement(Btn, { variant: "primary", icon: "download", onClick: () => downloadBackup(data) }, "백업 파일 다운로드 (.json)"),
         isAdmin && React.createElement(Btn, { variant: "outline", icon: "upload", onClick: () => fileRef.current.click() }, "백업 파일 서버로 가져오기"),
