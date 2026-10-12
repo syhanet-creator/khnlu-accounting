@@ -542,7 +542,7 @@ select.kinput {
   background-repeat: no-repeat; background-position: right 13px center;
 }
 
-.kbadge { display: inline-flex; align-items: center; padding: 2px 10px; border-radius: 999px; font-size: 12px; font-weight: 600; line-height: 1.6; }
+.kbadge { white-space: nowrap; display: inline-flex; align-items: center; padding: 2px 10px; border-radius: 999px; font-size: 12px; font-weight: 600; line-height: 1.6; }
 .kbadge-default { background: var(--muted-bg); color: var(--muted-fg); }
 .kbadge-muted { background: var(--muted-bg); color: var(--muted-fg); }
 .kbadge-warn { background: var(--warn-bg); color: var(--warn-fg); }
@@ -625,6 +625,15 @@ select.kinput {
 }
 .approval-role.long-label { font-size: 9.5px; letter-spacing: -0.3px; }
 .approval-sign { height: 42px; display: flex; align-items: center; justify-content: center; font-size: 12.5px; color: var(--ok); font-weight: 700; }
+.approval-sign.acting { flex-direction: column; gap: 1px; line-height: 1.15; font-size: 11px; }
+.acting-label { font-size: 10px; color: var(--warn); font-weight: 700; }
+.approval-box.skipped .approval-role { text-decoration: line-through; color: var(--text-faint); }
+.approval-box.skipped .approval-sign { position: relative; align-items: flex-start; padding-top: 5px; color: var(--text-faint); font-size: 10.5px; font-weight: 500; background: var(--surface-2); }
+.approval-box.skipped .approval-sign::after { content: ""; position: absolute; left: 7px; right: 7px; top: 62%; border-top: 2px solid var(--text-faint); }
+.step-chips { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 6px; }
+.step-chip { display: inline-block; padding: 2px 10px; border-radius: 999px; font-size: 12.5px; font-weight: 600; background: var(--hover); color: var(--text); }
+.step-chip.skipped { text-decoration: line-through; background: transparent; color: var(--text-faint); border: 1px dashed var(--border-strong); font-weight: 500; }
+.step-arrow { color: var(--text-faint); font-size: 12px; }
 .voucher-meta-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin-bottom: 14px; }
 .voucher-line-table-wrap { margin: 14px 0; border: 1px solid var(--border); border-radius: 14px; overflow: hidden; }
 .voucher-line-table { width: 100%; border-collapse: collapse; margin: 0; table-layout: fixed; }
@@ -981,6 +990,16 @@ function fyOfDate(dateStr) {
   // 날짜가 속한 회계연도의 시작연도 (4/1~익년 3/31)
   const y = Number(String(dateStr).slice(0, 4)), m = Number(String(dateStr).slice(5, 7));
   return m >= 4 ? y : y - 1;
+}
+// 전표의 결재 단계(순서): 상신된 전표는 지정된 결재선(생략 단계 제외), 그 외에는 조직 전체. 마지막 결재자가 빠진 값은 무시한다.
+function voucherSteps(v, data) {
+  const org = data.approvalSteps || [];
+  const line = v && v.status !== "draft" && v.approvalLine;
+  if (line && Array.isArray(line.steps)) {
+    const st = line.steps.filter(x => org.includes(x));
+    if (st.length && st[st.length - 1] === org[org.length - 1]) return st;
+  }
+  return org;
 }
 function fyRange(fyYear) {
   // fyYear = 시작연도 (예: 2026 -> 2026.4.1~2027.3.31)
@@ -2056,11 +2075,19 @@ function VoucherForm({ data, voucher, readOnly, onChange, onSave, onCancel, acco
         React.createElement("div", { className: "voucher-org" }, data.org)
       ),
       React.createElement("div", { className: "approval-strip" },
-        (data.approvalSteps || []).map(step => React.createElement("div", { key: step, className: "approval-box" },
-          React.createElement("div", { className: "approval-role" + (step.length >= 5 ? " long-label" : "") }, step),
-          React.createElement("div", { className: "approval-sign" }, v.approvals[step]?.approved ? "인" : "")
-        ))
+        (data.approvalSteps || []).map(step => {
+          const skipped = !voucherSteps(v, data).includes(step);
+          const ap = v.approvals && v.approvals[step];
+          return React.createElement("div", { key: step, className: "approval-box" + (skipped ? " skipped" : "") },
+            React.createElement("div", { className: "approval-role" + (step.length >= 5 ? " long-label" : "") }, step),
+            React.createElement("div", { className: "approval-sign" + (ap && ap.actingFor ? " acting" : ""), title: ap && ap.actingFor ? `대결: ${ap.by} (원 결재자 ${ap.actingFor})` : undefined },
+              skipped ? "생략"
+                : ap && ap.approved ? (ap.actingFor ? [React.createElement("span", { key: "l", className: "acting-label" }, "대결"), React.createElement("span", { key: "n" }, ap.by)] : "인")
+                : "")
+          );
+        })
       ),
+      v.status !== "draft" && v.approvalLine && v.approvalLine.id !== "default" && React.createElement("p", { className: "note-text" }, `결재선: ${v.approvalLine.name} (${(v.approvalLine.steps || []).join(" → ")})${v.approvalLine.note ? " · 생략 사유: " + v.approvalLine.note : ""}`),
       v.rejection && React.createElement("p", { className: "note-text", style: { color: "var(--danger)" } }, `반려됨 - ${v.rejection.step} ${v.rejection.by}: ${v.rejection.reason}`),
       v.revocation && React.createElement("p", { className: "note-text" }, `승인 취소됨 - ${v.revocation.by}: ${v.revocation.reason}`),
       v.status === "approved" && v.createdByName && React.createElement("p", { className: "note-text" }, `작성자: ${v.createdByName}`),
@@ -2201,13 +2228,19 @@ function buildVoucherPrintNode(v, data) {
   const steps = data.approvalSteps || [];
   const strip = el("table", "border-collapse:collapse;margin:0 0 14px auto;");
   const head = el("tr"), body = el("tr");
+  const lineSteps = voucherSteps(v, data);
   steps.forEach(step => {
-    head.appendChild(el("th", B + "padding:3px 8px;min-width:78px;font-size:12px;background:#f1efe7;", step));
+    const skipped = !lineSteps.includes(step);
+    head.appendChild(el("th", B + "padding:3px 8px;min-width:78px;font-size:12px;background:#f1efe7;" + (skipped ? "text-decoration:line-through;color:#999;" : ""), step));
     const ap = v.approvals && v.approvals[step];
-    const cell = el("td", B + "height:58px;text-align:center;vertical-align:middle;font-size:11px;");
-    if (ap && ap.approved) {
-      cell.appendChild(el("div", "font-size:15px;font-weight:700;color:#b3261e;", "승인"));
+    const cell = el("td", B + "height:58px;text-align:center;vertical-align:middle;font-size:11px;" + (skipped ? "background:#f1efe7;" : ""));
+    if (skipped) {
+      cell.appendChild(el("div", "font-size:10px;color:#777;", "생략"));
+      cell.appendChild(el("div", "height:2px;background:#333;margin:10px 8px 0;"));
+    } else if (ap && ap.approved) {
+      cell.appendChild(el("div", "font-size:15px;font-weight:700;color:" + (ap.actingFor ? "#b45309" : "#b3261e") + ";", ap.actingFor ? "대결" : "승인"));
       cell.appendChild(el("div", "", ap.by || ""));
+      if (ap.actingFor) cell.appendChild(el("div", "color:#555;font-size:10px;", `(${ap.actingFor})`));
       cell.appendChild(el("div", "color:#555;", ap.at ? String(ap.at).slice(0, 10) : ""));
     }
     body.appendChild(cell);
@@ -2224,6 +2257,7 @@ function buildVoucherPrintNode(v, data) {
   const row = (pairs) => { const tr = el("tr"); pairs.forEach(([l, t, span]) => { tr.appendChild(el("td", lab, l)); const td = el("td", val, t); if (span) td.setAttribute("colspan", span); tr.appendChild(td); }); meta.appendChild(tr); };
   row([["문서번호", v.docNo || "(저장 시 부여)"], ["작성일자", v.date || ""]]);
   row([["전표구분", typeLabel], ["집행부서", v.department || ""]]);
+  if (v.status !== "draft" && v.approvalLine && v.approvalLine.id !== "default") row([["결재선", `${v.approvalLine.name} (${(v.approvalLine.steps || []).join(" → ")})${v.approvalLine.note ? " · 생략 사유: " + v.approvalLine.note : ""}`, 3]]);
   row([["제목", v.title || "", 3]]);
   row([["목적", v.purpose || "", 3]]);
   if (contract) row([["관련 계약", `${contract.title} (${fmtNum(contract.amount)}원)`, 3]]);
@@ -2368,7 +2402,14 @@ async function deliverPdf(pdfBytes, fileName) {
 function VoucherPrintActions({ voucher, data, onCancel, onSave, balanced, readOnly }) {
   const pendingRef = useRef(false);
   const [pkgBusy, setPkgBusy] = useState("");
+  const [lineOpen, setLineOpen] = useState(false);
   const attachments = voucher.attachments || [];
+  const approvalLines = (data && data.approvalLines) || [];
+  // 허용 결재선이 정식 하나뿐이면 바로 상신, 둘 이상이면 선택 창을 띄운다
+  function startSubmit() {
+    if (approvalLines.length > 1) setLineOpen(true);
+    else onSave({ ...voucher, status: "pending" });
+  }
   const blobAttachments = attachments.filter(a => a.blob);
 
   // 결의서 + 서버에 저장된 증빙을 하나의 PDF로 합쳐 연다
@@ -2422,7 +2463,12 @@ function VoucherPrintActions({ voucher, data, onCancel, onSave, balanced, readOn
       variant: "outline", icon: "print", onClick: printWithAttachments
     }, `증빙 포함 일괄인쇄 (${attachments.filter(a => a.path).length})`),
     !readOnly && React.createElement(Btn, { variant: "outline", onClick: () => onSave({ ...voucher, status: "draft" }) }, "임시저장"),
-    !readOnly && React.createElement(Btn, { variant: "primary", disabled: !balanced || !voucher.title, onClick: () => onSave({ ...voucher, status: "pending" }) }, "결재상신")
+    !readOnly && React.createElement(Btn, { variant: "primary", disabled: !balanced || !voucher.title, onClick: startSubmit }, "결재상신"),
+    lineOpen && React.createElement(ApprovalLineChooser, {
+      lines: approvalLines, orgSteps: data.approvalSteps || [], initialId: voucher.approvalLine && voucher.approvalLine.id,
+      onCancel: () => setLineOpen(false),
+      onConfirm: (lineId, note) => { setLineOpen(false); onSave({ ...voucher, status: "pending", approvalLineId: lineId, approvalNote: note }); }
+    })
   );
 }
 
@@ -3285,6 +3331,216 @@ if (window.matchMedia) {
   if (mq.addEventListener) mq.addEventListener("change", onSys);
 }
 
+// ===== 결재선 선택(직상신/생략) · 대결 =====
+// 결재 단계 표시: 생략되는 단계는 가로선으로 그어 보여 준다. 마지막 결재자는 항상 포함된다.
+function StepChips({ orgSteps, steps }) {
+  return React.createElement("div", { className: "step-chips" },
+    orgSteps.map((s, i) => React.createElement(React.Fragment, { key: s },
+      i > 0 && React.createElement("span", { className: "step-arrow" }, "→"),
+      React.createElement("span", { className: "step-chip" + (steps.includes(s) ? "" : " skipped") }, s)
+    ))
+  );
+}
+
+// 결재상신 직전에 결재선을 고르는 창(허용된 결재선이 2개 이상일 때만 뜬다)
+function ApprovalLineChooser({ lines, orgSteps, initialId, onCancel, onConfirm }) {
+  const [sel, setSel] = useState(lines.some(l => l.id === initialId) ? initialId : "default");
+  const [note, setNote] = useState("");
+  const cur = lines.find(l => l.id === sel) || lines[0];
+  const skipped = orgSteps.filter(s => !cur.steps.includes(s));
+  return React.createElement(Modal, { open: true, onClose: onCancel, title: "결재선 선택", width: 560 },
+    React.createElement("p", { className: "note-text" }, "이 전표를 결재받을 결재선을 고르세요. 생략되는 단계는 가로선으로 표시되며, 마지막 결재자는 항상 포함됩니다."),
+    lines.map(l => React.createElement("button", {
+      key: l.id, type: "button", className: "org-choice" + (sel === l.id ? " selected" : ""), style: { width: "100%", marginBottom: 8 }, onClick: () => setSel(l.id)
+    },
+      React.createElement("div", { className: "org-choice-title", style: { fontSize: 14.5, marginBottom: 8 } }, l.name),
+      React.createElement(StepChips, { orgSteps, steps: l.steps })
+    )),
+    skipped.length > 0 && React.createElement(Field, { label: "생략 사유 (선택)", hint: `생략되는 단계: ${skipped.join(", ")}` },
+      React.createElement("input", { className: "kinput", value: note, onChange: e => setNote(e.target.value), maxLength: 200, placeholder: "예: 긴급 건으로 직상신" })),
+    React.createElement("div", { className: "voucher-actions", style: { marginTop: 14 } },
+      React.createElement(Btn, { variant: "ghost", onClick: onCancel }, "취소"),
+      React.createElement(Btn, { variant: "primary", onClick: () => onConfirm(cur.id, note.trim()) }, `${cur.name}로 결재상신`)
+    )
+  );
+}
+
+function ApprovalLineFormModal({ orgSteps, initial, onClose, onSaved }) {
+  const last = orgSteps[orgSteps.length - 1];
+  const [name, setName] = useState(initial ? initial.name : "");
+  const [picked, setPicked] = useState(() => new Set(initial ? initial.steps : [last]));
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  const steps = orgSteps.filter(s => picked.has(s) || s === last);
+  const toggle = s => { if (s === last) return; setPicked(prev => { const n = new Set(prev); if (n.has(s)) n.delete(s); else n.add(s); return n; }); };
+  const isFull = steps.length === orgSteps.length;
+  async function submit() {
+    if (busy) return;
+    setBusy(true); setError("");
+    try {
+      await apiCall("approval/line_save", { method: "POST", body: { id: initial ? Number(initial.id) : undefined, name: name.trim(), steps, isActive: initial ? initial.isActive : true } });
+      onSaved();
+    } catch (e) { setError(e.message); } finally { setBusy(false); }
+  }
+  return React.createElement(Modal, { open: true, onClose, title: initial ? "결재선 수정" : "결재선 추가" },
+    React.createElement("form", { onSubmit: e => { e.preventDefault(); submit(); } },
+      React.createElement(Field, { label: "결재선 이름", required: true, hint: "작성자가 상신할 때 이 이름으로 고릅니다. 예: 직상신" },
+        React.createElement("input", { className: "kinput", value: name, onChange: e => setName(e.target.value), maxLength: 40, autoFocus: true })),
+      React.createElement(Field, { label: "거칠 결재 단계", required: true, hint: `체크하지 않은 단계는 생략됩니다. 마지막 결재자(${last})는 항상 포함됩니다.` },
+        React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 6 } },
+          orgSteps.map(s => React.createElement("label", { key: s, style: { display: "flex", alignItems: "center", gap: 8, fontSize: 14, cursor: s === last ? "not-allowed" : "pointer" } },
+            React.createElement("input", { type: "checkbox", checked: picked.has(s) || s === last, disabled: s === last, onChange: () => toggle(s) }), s, s === last && React.createElement("span", { className: "muted", style: { fontSize: 12 } }, "(필수)"))))),
+      React.createElement("div", { style: { margin: "10px 0 4px" } }, React.createElement(StepChips, { orgSteps, steps })),
+      isFull && React.createElement("p", { style: { color: "var(--danger)", fontSize: 12.5, margin: "6px 0 0" } }, "모든 단계를 거치는 결재선은 \"정식 결재선\"으로 이미 있습니다. 생략할 단계를 하나 이상 해제하세요."),
+      error && React.createElement("p", { style: { color: "var(--danger)", fontSize: 13, margin: "8px 0 0" } }, error),
+      React.createElement("div", { style: { marginTop: 16, display: "flex", gap: 8, justifyContent: "flex-end" } },
+        React.createElement(Btn, { onClick: onClose }, "취소"),
+        React.createElement(Btn, { variant: "primary", type: "submit", disabled: busy || !name.trim() || isFull }, busy ? "저장 중..." : "저장")
+      )
+    )
+  );
+}
+
+function DelegationFormModal({ me, orgSteps, people, onClose, onSaved }) {
+  const isAdmin = me.role === "admin";
+  const kst = (add) => new Date(Date.now() + 9 * 3600 * 1000 + add * 86400000).toISOString().slice(0, 10);
+  const [step, setStep] = useState(isAdmin ? "" : me.approvalStep);
+  const [absent, setAbsent] = useState(isAdmin ? "" : String(me.id));
+  const [delegate, setDelegate] = useState("");
+  const [from, setFrom] = useState(kst(0));
+  const [to, setTo] = useState(kst(7));
+  const [note, setNote] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  const absentOptions = people.filter(p => p.step === step).map(p => ({ value: String(p.id), label: p.displayName }));
+  const delegateOptions = people.filter(p => String(p.id) !== absent).map(p => ({ value: String(p.id), label: `${p.displayName} (${p.step})` }));
+  const ok = step && absent && delegate && from && to;
+  async function submit() {
+    if (busy || !ok) return;
+    setBusy(true); setError("");
+    try {
+      await apiCall("approval/delegation_save", { method: "POST", body: { step, absentUserId: Number(absent), delegateUserId: Number(delegate), from, to, note: note.trim() } });
+      onSaved();
+    } catch (e) { setError(e.message); } finally { setBusy(false); }
+  }
+  return React.createElement(Modal, { open: true, onClose, title: "대결 지정" },
+    React.createElement("form", { onSubmit: e => { e.preventDefault(); submit(); } },
+      React.createElement("p", { className: "note-text" }, "부재 기간 동안 지정한 결재자가 이 단계를 대신 결재합니다. 도장 칸에는 \"대결\"과 원 결재자 이름이 표시됩니다. 한 사람이 같은 전표를 두 번 결재할 수는 없습니다."),
+      isAdmin && React.createElement(Field, { label: "결재 단계", required: true },
+        React.createElement(Select, { value: step, onChange: v => { setStep(v); setAbsent(""); }, placeholder: "단계 선택", options: orgSteps.map(s => ({ value: s, label: s })) })),
+      !isAdmin && React.createElement(Field, { label: "결재 단계" }, React.createElement("input", { className: "kinput", value: `${me.approvalStep} (본인)`, disabled: true })),
+      isAdmin && React.createElement(Field, { label: "부재자(원 결재자)", required: true },
+        React.createElement(Select, { value: absent, onChange: setAbsent, placeholder: step ? "부재자 선택" : "먼저 단계를 선택하세요", options: absentOptions })),
+      React.createElement(Field, { label: "대결자", required: true, hint: "같은 조직의 사용 중인 결재자 중에서 고릅니다." },
+        React.createElement(Select, { value: delegate, onChange: setDelegate, placeholder: "대결자 선택", options: delegateOptions })),
+      React.createElement("div", { style: { display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 } },
+        React.createElement(Field, { label: "시작일", required: true }, React.createElement("input", { type: "date", className: "kinput", value: from, onChange: e => setFrom(e.target.value) })),
+        React.createElement(Field, { label: "종료일", required: true }, React.createElement("input", { type: "date", className: "kinput", value: to, onChange: e => setTo(e.target.value) }))),
+      React.createElement(Field, { label: "메모 (선택)" }, React.createElement("input", { className: "kinput", value: note, onChange: e => setNote(e.target.value), maxLength: 100, placeholder: "예: 연차 휴가" })),
+      error && React.createElement("p", { style: { color: "var(--danger)", fontSize: 13, margin: "8px 0 0" } }, error),
+      React.createElement("div", { style: { marginTop: 16, display: "flex", gap: 8, justifyContent: "flex-end" } },
+        React.createElement(Btn, { onClick: onClose }, "취소"),
+        React.createElement(Btn, { variant: "primary", type: "submit", disabled: busy || !ok }, busy ? "저장 중..." : "대결 지정")
+      )
+    )
+  );
+}
+
+// 결재 설정 화면: 조직 관리자(결재선 관리 + 모든 대결) / 결재자(내 대결)
+function ApprovalSettingsScreen({ me, onChanged }) {
+  const isAdmin = me.role === "admin";
+  const [orgSteps, setOrgSteps] = useState([]);
+  const [people, setPeople] = useState([]);
+  const [lines, setLines] = useState(null);
+  const [dels, setDels] = useState(null);
+  const [today, setToday] = useState("");
+  const [error, setError] = useState("");
+  const [lineForm, setLineForm] = useState(null);
+  const [delForm, setDelForm] = useState(false);
+
+  async function load() {
+    try {
+      const p = await apiRetrying("approval/people", {}, () => {});
+      setOrgSteps(p.orgSteps); setPeople(p.approvers);
+      const d = await apiRetrying("approval/delegations", {}, () => {});
+      setDels(d.delegations); setToday(d.today);
+      if (isAdmin) setLines((await apiRetrying("approval/lines", {}, () => {})).lines);
+      setError("");
+    } catch (e) { setError(e.message); }
+  }
+  useEffect(() => { load(); }, []);
+  function changed() { load(); if (onChanged) onChanged(); }
+
+  async function toggleLine(l) {
+    try { await apiCall("approval/line_save", { method: "POST", body: { id: Number(l.id), name: l.name, steps: l.steps, isActive: !l.isActive } }); changed(); } catch (e) { alert(e.message); }
+  }
+  async function deleteLine(l) {
+    if (!confirm(`"${l.name}" 결재선을 삭제할까요? 이미 상신된 전표는 상신 당시의 결재선 그대로 진행됩니다.`)) return;
+    try { await apiCall("approval/line_delete", { method: "POST", body: { id: Number(l.id) } }); changed(); } catch (e) { alert(e.message); }
+  }
+  async function cancelDel(d) {
+    if (!confirm(`${d.step} 단계 대결(${d.absentName} → ${d.delegateName}, ${d.from} ~ ${d.to})을 취소할까요?`)) return;
+    try { await apiCall("approval/delegation_cancel", { method: "POST", body: { id: d.id } }); changed(); } catch (e) { alert(e.message); }
+  }
+  const status = d => d.to < today ? ["종료", "default"] : d.from > today ? ["예정", "info"] : ["진행 중", "ok"];
+
+  return React.createElement("div", null,
+    error && React.createElement("p", { style: { color: "var(--danger)", fontSize: 13 } }, error),
+
+    isAdmin && React.createElement(Card, {
+      title: "결재선 관리", subtitle: "작성자가 상신할 때 고를 수 있는 결재선을 정합니다. 생략되는 단계는 가로선으로 표시되고, 마지막 결재자는 항상 포함됩니다.",
+      actions: React.createElement(Btn, { variant: "primary", icon: "plus", size: "sm", onClick: () => setLineForm({}) }, "결재선 추가")
+    },
+      lines === null ? React.createElement("p", { className: "note-text" }, "불러오는 중...") :
+      React.createElement("div", { style: { overflowX: "auto" } },
+        React.createElement("table", { className: "data-table" },
+          React.createElement("thead", null, React.createElement("tr", null, ["결재선", "거치는 단계", "상태", ""].map(h => React.createElement("th", { key: h }, h)))),
+          React.createElement("tbody", null,
+            React.createElement("tr", null,
+              React.createElement("td", { style: { fontWeight: 600 } }, "정식 결재선"),
+              React.createElement("td", null, React.createElement(StepChips, { orgSteps, steps: orgSteps })),
+              React.createElement("td", null, React.createElement(Badge, { tone: "ok" }, "항상 사용")),
+              React.createElement("td", { className: "muted" }, "기본 · 변경 불가")),
+            lines.map(l => React.createElement("tr", { key: l.id },
+              React.createElement("td", { style: { fontWeight: 600 } }, l.name),
+              React.createElement("td", null, React.createElement(StepChips, { orgSteps, steps: l.steps })),
+              React.createElement("td", null, l.isActive ? React.createElement(Badge, { tone: "ok" }, "사용 중") : React.createElement(Badge, { tone: "default" }, "중지")),
+              React.createElement("td", { style: { whiteSpace: "nowrap", textAlign: "right" } },
+                React.createElement(Btn, { size: "sm", variant: "ghost", onClick: () => setLineForm(l) }, "수정"),
+                React.createElement(Btn, { size: "sm", variant: "ghost", onClick: () => toggleLine(l) }, l.isActive ? "사용 중지" : "사용"),
+                React.createElement(Btn, { size: "sm", variant: "ghost", onClick: () => deleteLine(l) }, "삭제")))))
+        )
+      )
+    ),
+
+    React.createElement(Card, {
+      title: "대결 설정", subtitle: isAdmin ? "결재자가 부재일 때 대신 결재할 사람과 기간을 정합니다. 모든 결재자의 대결을 지정·취소할 수 있습니다." : "내가 부재일 때 대신 결재할 사람과 기간을 정합니다.",
+      actions: React.createElement(Btn, { variant: "primary", icon: "plus", size: "sm", onClick: () => setDelForm(true) }, "대결 지정")
+    },
+      dels === null ? React.createElement("p", { className: "note-text" }, "불러오는 중...") :
+      dels.length === 0 ? React.createElement("p", { className: "note-text" }, "진행 중이거나 예정된 대결이 없습니다.") :
+      React.createElement("div", { style: { overflowX: "auto" } },
+        React.createElement("table", { className: "data-table" },
+          React.createElement("thead", null, React.createElement("tr", null, ["결재 단계", "부재자 → 대결자", "기간", "상태", "메모", ""].map(h => React.createElement("th", { key: h }, h)))),
+          React.createElement("tbody", null, dels.map(d => {
+            const [label, tone] = status(d);
+            return React.createElement("tr", { key: d.id },
+              React.createElement("td", { style: { fontWeight: 600 } }, d.step),
+              React.createElement("td", null, `${d.absentName} → ${d.delegateName}`),
+              React.createElement("td", { style: { whiteSpace: "nowrap" } }, `${d.from} ~ ${d.to}`),
+              React.createElement("td", null, React.createElement(Badge, { tone }, label)),
+              React.createElement("td", { className: "muted" }, d.note || ""),
+              React.createElement("td", { style: { textAlign: "right" } }, d.to >= today && React.createElement(Btn, { size: "sm", variant: "ghost", onClick: () => cancelDel(d) }, "취소")));
+          }))
+        )
+      )
+    ),
+
+    lineForm && React.createElement(ApprovalLineFormModal, { orgSteps, initial: lineForm.id ? lineForm : null, onClose: () => setLineForm(null), onSaved: () => { setLineForm(null); changed(); } }),
+    delForm && React.createElement(DelegationFormModal, { me, orgSteps, people, onClose: () => setDelForm(false), onSaved: () => { setDelForm(false); changed(); } })
+  );
+}
+
 // 계정 메뉴(아바타): 비밀번호 변경 · 화면 모드 · 로그아웃. placement "sidebar"(PC 사이드바 아래) | "topbar"(모바일·시스템관리자 위쪽)
 function AccountMenu({ user, placement, onPassword, onLogout }) {
   const [open, setOpen] = useState(false);
@@ -3894,9 +4150,16 @@ function MainApp({ authUser, onLogout, initialData }) {
   const isAdmin = role === "admin";
   const canEdit = isAdmin || role === "accountant";
   const isMine = v => v.createdBy === authUser.id;
-  const nextStepOf = v => (data.approvalSteps || []).find(s => !(v.approvals && v.approvals[s] && v.approvals[s].approved));
+  const nextStepOf = v => voucherSteps(v, data).find(s => !(v.approvals && v.approvals[s] && v.approvals[s].approved));
+  // 오늘 내가 대결할 수 있는 단계(서버가 내려준 값)
+  const myDelegation = step => (data.myDelegations || []).find(d => d.step === step);
+  const approvedByMe = v => Object.values(v.approvals || {}).some(a => a && a.by === authUser.displayName);
   const isAutoVoucher = v => !!(v.isAutoGenerated || v.isDepreciationEntry || v.isClosingEntry);
-  const canApproveNow = v => role === "approver" && v.status === "pending" && !!authUser.approvalStep && nextStepOf(v) === authUser.approvalStep && !isMine(v);
+  const canApproveNow = v => {
+    if (role !== "approver" || v.status !== "pending" || isMine(v) || approvedByMe(v)) return false;
+    const next = nextStepOf(v);
+    return !!next && (authUser.approvalStep === next || !!myDelegation(next));
+  };
   const canEditVoucher = v => v.version === undefined ? canEdit : (canEdit && ["draft", "rejected"].includes(v.status) && (isAdmin || isMine(v)) && !isAutoVoucher(v));
   const voucherPerms = {
     canEdit, isAdmin, canApproveNow, canEditVoucher, nextStepOf,
@@ -3976,7 +4239,11 @@ function MainApp({ authUser, onLogout, initialData }) {
     }
   }
   async function approveVoucher(v) {
-    if (!confirm(`"${v.title || "제목없음"}" 전표를 [${authUser.approvalStep}] 단계에서 승인할까요?`)) return;
+    const next = nextStepOf(v);
+    const acting = next && authUser.approvalStep !== next ? myDelegation(next) : null;
+    if (!confirm(acting
+      ? `"${v.title || "제목없음"}" 전표를 [${next}] 단계 대결로 승인할까요?\n(원 결재자: ${acting.absentName} — 도장 칸에 "대결"로 표시됩니다)`
+      : `"${v.title || "제목없음"}" 전표를 [${next || authUser.approvalStep}] 단계에서 승인할까요?`)) return;
     try {
       const r = await serverCall("data/voucher_approve", { id: v.id, version: v.version });
       setData(prev => upsertVoucher(prev, r.voucher));
@@ -4123,11 +4390,15 @@ function MainApp({ authUser, onLogout, initialData }) {
     setNav(key);
     setMoreOpen(false);
     if (key === "voucher" && voucher) setEditingVoucher(voucher);
-    if (key !== "accounts") trackMenuClick(key); // 계정 관리는 클릭 집계 대상이 아니다
+    if (key !== "accounts" && key !== "approval") trackMenuClick(key); // 계정 관리·결재 설정은 클릭 집계 대상이 아니다
   }
 
   // 조직 관리자에게만 "계정 관리" 메뉴가 보인다(서버에서도 같은 권한을 검사한다).
-  const navItems = authUser.role === "admin" ? [...NAV_ITEMS, { key: "accounts", label: "계정 관리", icon: "users" }] : NAV_ITEMS;
+  const navItems = [
+    ...NAV_ITEMS,
+    ...(authUser.role === "admin" || authUser.role === "approver" ? [{ key: "approval", label: "결재 설정", icon: "check" }] : []),
+    ...(authUser.role === "admin" ? [{ key: "accounts", label: "계정 관리", icon: "users" }] : []),
+  ];
   const navLabel = navItems.find(n => n.key === nav)?.label || "";
 
   const moreItems = navItems.filter(item => !MOBILE_TAB_KEYS.includes(item.key));
@@ -4197,6 +4468,7 @@ function MainApp({ authUser, onLogout, initialData }) {
         nav === "asset" && React.createElement(AssetScreen, { data, canEdit, canDelete: isAdmin, onAdd: addAsset, onDelete: deleteAsset }),
         nav === "contract" && React.createElement(ContractScreen, { data, canEdit, onAdd: addContract, onDelete: deleteContract, onUpdateContract: updateContract }),
         nav === "yearend" && React.createElement(YearEndScreen, { data, canClose: isAdmin, onCloseYear: closeYear, onNavBudget: () => setNav("budget") }),
+        nav === "approval" && (isAdmin || role === "approver") && React.createElement(ApprovalSettingsScreen, { me: authUser, onChanged: () => refresh(true) }),
         nav === "accounts" && authUser.role === "admin" && React.createElement(AccountsScreen, { me: authUser }),
         nav === "settings" && React.createElement(SettingsScreen, { data, isAdmin, onImport: handleImport, saveStatus, menuClickTotal }),
       )
