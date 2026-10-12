@@ -1,0 +1,17 @@
+{
+  "id": "/",
+  "name": "한수원노동조합 회계관리 시스템",
+  "short_name": "노조회계",
+  "description": "한수원노동조합 회계결의서·장부·예산 관리 (서버 로그인)",
+  "lang": "ko",
+  "start_url": "/?source=pwa",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#F6F4EE",
+  "theme_color": "#16283C",
+  "icons": [
+    { "src": "/icons/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "/icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "/icons/icon-maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}

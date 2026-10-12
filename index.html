@@ -7,6 +7,9 @@
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="default">
 <meta name="theme-color" content="#16283C">
+<link rel="manifest" href="/manifest.webmanifest">
+<link rel="icon" type="image/png" href="/icons/icon-192.png">
+<link rel="apple-touch-icon" href="/icons/icon-192.png">
 <title>한수원노동조합 회계관리 시스템</title>
 <script>
 /**
@@ -2816,6 +2819,20 @@ function LoginScreen({ onLoggedIn }) {
   const [busy, setBusy] = useState(false);
   const [waking, setWaking] = useState(false);
   const [error, setError] = useState("");
+  const [canInstall, setCanInstall] = useState(!!window.__installPrompt);
+  useEffect(() => {
+    const h = () => setCanInstall(!!window.__installPrompt);
+    window.addEventListener("khnp-install-ready", h);
+    return () => window.removeEventListener("khnp-install-ready", h);
+  }, []);
+  async function installApp() {
+    const ev = window.__installPrompt;
+    if (!ev) return;
+    ev.prompt();
+    try { await ev.userChoice; } catch (e) {}
+    window.__installPrompt = null;
+    setCanInstall(false);
+  }
 
   async function submit() {
     if (busy || !loginId.trim() || !password) return;
@@ -2844,7 +2861,9 @@ function LoginScreen({ onLoggedIn }) {
       React.createElement("div", { style: { marginTop: 18 } },
         React.createElement(Btn, { variant: "primary", type: "submit", disabled: busy || !loginId.trim() || !password }, busy ? "로그인 중..." : "로그인")
       ),
-      React.createElement("p", { style: { color: "var(--ink-soft)", fontSize: 12, marginTop: 14 } }, "계정은 조직 관리자가 발급합니다. 비밀번호를 잊었으면 관리자에게 초기화를 요청하세요.")
+      React.createElement("p", { style: { color: "var(--ink-soft)", fontSize: 12, marginTop: 14 } }, "계정은 조직 관리자가 발급합니다. 비밀번호를 잊었으면 관리자에게 초기화를 요청하세요."),
+      canInstall && React.createElement("div", { style: { marginTop: 12 } },
+        React.createElement(Btn, { onClick: installApp }, "이 기기에 앱으로 설치"))
     )
   );
 }
@@ -3675,6 +3694,17 @@ function MainApp({ authUser, onLogout, initialData }) {
     )
   );
 }
+
+// 앱으로 설치(PWA): 서비스 워커는 앱 화면만 저장하고 회계 데이터(/api)는 저장하지 않는다.
+if ("serviceWorker" in navigator && location.protocol.indexOf("http") === 0) {
+  window.addEventListener("load", () => { navigator.serviceWorker.register("/sw.js").catch(() => {}); });
+}
+window.addEventListener("beforeinstallprompt", e => {
+  e.preventDefault();
+  window.__installPrompt = e;
+  window.dispatchEvent(new Event("khnp-install-ready"));
+});
+window.addEventListener("appinstalled", () => { window.__installPrompt = null; window.dispatchEvent(new Event("khnp-install-ready")); });
 
 const root = ReactDOM.createRoot(document.getElementById("root"));
 root.render(React.createElement(App));
