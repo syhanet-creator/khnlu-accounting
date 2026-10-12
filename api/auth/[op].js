@@ -109,6 +109,7 @@ const handlers = {
     if (!guard(req, res, ["POST"])) return;
     const me = await getSessionUser(req);
     if (!me) return send(res, 401, { error: "로그인이 필요합니다." });
+    if (me.role === "viewer") return send(res, 403, { error: "조회전용 계정의 비밀번호는 조직 관리자만 바꿀 수 있습니다. 조직 관리자에게 초기화를 요청해 주세요." });
     const { currentPassword, newPassword } = getBody(req);
     if (!isStr(currentPassword, 1, 128)) return send(res, 400, { error: "현재 비밀번호를 입력해 주세요." });
 

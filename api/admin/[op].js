@@ -177,15 +177,15 @@ const handlers = {
     try {
       await run(
         `INSERT INTO dbo.users (org_id, login_id, display_name, password_hash, role, approval_step, must_change_password, created_by)
-         VALUES (@org, @l, @d, @h, @role, @step, 1, @by)`,
-        { org: [sql.Int, org.id], l: [sql.NVarChar(50), loginId], d: [sql.NVarChar(50), displayName.trim()], h: [sql.VarChar(200), hash], role: [sql.VarChar(20), role], step: [sql.NVarChar(50), step], by: [sql.Int, me.id] }
+         VALUES (@org, @l, @d, @h, @role, @step, @mcp, @by)`,
+        { org: [sql.Int, org.id], l: [sql.NVarChar(50), loginId], d: [sql.NVarChar(50), displayName.trim()], h: [sql.VarChar(200), hash], role: [sql.VarChar(20), role], step: [sql.NVarChar(50), step], mcp: [sql.Bit, role !== "viewer"], by: [sql.Int, me.id] }
       );
     } catch (e) {
       if (isUniqueViolation(e)) throw new HttpError(409, "이미 사용 중인 아이디입니다.");
       throw e;
     }
     await audit({ orgId: org.id, userId: me.id, loginId: me.loginId, action: "user_create", target: loginId, detail: `role=${role}${step ? ", step=" + step : ""}`, ip: clientIp(req) });
-    send(res, 200, { loginId, tempPassword });
+    send(res, 200, { loginId, tempPassword, passwordFixed: role === "viewer" });
   },
 
   async user_update(req, res) {
@@ -215,8 +215,9 @@ const handlers = {
     }
 
     await run(
-      "UPDATE dbo.users SET display_name = @d, role = @role, approval_step = @step, is_active = @a WHERE id = @id AND org_id = @org",
-      { d: [sql.NVarChar(50), displayName.trim()], role: [sql.VarChar(20), role], step: [sql.NVarChar(50), step], a: [sql.Bit, active], id: [sql.Int, t.id], org: [sql.Int, org.id] }
+      // 조회전용 -> 다른 역할이면(관리자가 비밀번호를 알고 있으므로) 다음 로그인 때 본인이 바꾸게 하고, 다른 역할 -> 조회전용이면 강제 변경을 끈다.
+      "UPDATE dbo.users SET display_name = @d, role = @role, approval_step = @step, is_active = @a, must_change_password = CASE WHEN @role = 'viewer' THEN 0 WHEN @prev = 'viewer' THEN 1 ELSE must_change_password END WHERE id = @id AND org_id = @org",
+      { d: [sql.NVarChar(50), displayName.trim()], role: [sql.VarChar(20), role], prev: [sql.VarChar(20), t.role], step: [sql.NVarChar(50), step], a: [sql.Bit, active], id: [sql.Int, t.id], org: [sql.Int, org.id] }
     );
     // 역할/활성 상태가 바뀌면 기존 로그인 세션을 끊어 새 권한이 즉시 적용되게 한다.
     if (role !== t.role || active !== !!t.is_active || step !== t.approval_step) {
@@ -237,12 +238,12 @@ const handlers = {
     const tempPassword = generateTempPassword(t.login_id);
     const hash = await hashPassword(tempPassword);
     await run(
-      "UPDATE dbo.users SET password_hash = @h, must_change_password = 1, failed_attempts = 0, locked_until = NULL WHERE id = @id AND org_id = @org",
-      { h: [sql.VarChar(200), hash], id: [sql.Int, t.id], org: [sql.Int, org.id] }
+      "UPDATE dbo.users SET password_hash = @h, must_change_password = @mcp, failed_attempts = 0, locked_until = NULL WHERE id = @id AND org_id = @org",
+      { h: [sql.VarChar(200), hash], mcp: [sql.Bit, t.role !== "viewer"], id: [sql.Int, t.id], org: [sql.Int, org.id] }
     );
     await run("DELETE FROM dbo.sessions WHERE user_id = @id", { id: [sql.Int, t.id] });
     await audit({ orgId: org.id, userId: me.id, loginId: me.loginId, action: "user_reset", target: t.login_id, ip: clientIp(req) });
-    send(res, 200, { loginId: t.login_id, tempPassword });
+    send(res, 200, { loginId: t.login_id, tempPassword, passwordFixed: t.role === "viewer" });
   },
 };
 

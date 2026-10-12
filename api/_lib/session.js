@@ -44,7 +44,7 @@ function toUserView(row) {
     displayName: row.display_name,
     role: row.role,
     approvalStep: row.approval_step,
-    mustChangePassword: !!row.must_change_password,
+    mustChangePassword: !!row.must_change_password && row.role !== "viewer",
     org: row.org_id ? { id: row.org_id, name: row.org_name, orgType: row.org_type, approvalSteps: steps, currentFy: row.current_fy } : null,
   };
 }
