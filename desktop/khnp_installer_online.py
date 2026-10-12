@@ -8,7 +8,7 @@ import winreg
 
 APP_NAME = "KHNP-UnionAccounting-Online"
 APP_DISPLAY_NAME = "한수원노동조합 회계관리 시스템 (서버판)"
-APP_VERSION = "2.1.0"
+APP_VERSION = "2.2.0"
 PUBLISHER = "한수원노동조합"
 UNINSTALL_KEY = rf"Software\Microsoft\Windows\CurrentVersion\Uninstall\{APP_NAME}"
 

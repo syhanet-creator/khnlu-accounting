@@ -1,6 +1,6 @@
 // 서비스 워커: 앱 화면(껍데기)만 저장해 두어 설치된 앱이 바로 열리게 한다.
 // 회계 데이터·로그인(/api/*)은 절대 가로채거나 저장하지 않는다 → 인터넷이 없으면 데이터는 보이지 않고 "서버에 연결할 수 없습니다" 안내가 나온다.
-const CACHE = "khnp-shell-v1";
+const CACHE = "khnp-shell-v2";
 const SHELL = ["/", "/manifest.webmanifest", "/icons/icon-192.png", "/icons/icon-512.png"];
 
 self.addEventListener("install", event => {

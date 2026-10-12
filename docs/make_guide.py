@@ -19,12 +19,12 @@ pdfmetrics.registerFont(TTFont("Malgun", "C:/Windows/Fonts/malgun.ttf"))
 pdfmetrics.registerFont(TTFont("Malgun-Bold", "C:/Windows/Fonts/malgunbd.ttf"))
 pdfmetrics.registerFontFamily("Malgun", normal="Malgun", bold="Malgun-Bold", italic="Malgun", boldItalic="Malgun-Bold")
 
-NAVY = colors.HexColor("#16283C")
-GOLD = colors.HexColor("#C9A24B")
-PAPER = colors.HexColor("#F7F5EE")
-LINE = colors.HexColor("#D9D4C3")
-INK = colors.HexColor("#1D2733")
-SOFT = colors.HexColor("#5B6573")
+NAVY = colors.HexColor("#0D0D0D")
+GOLD = colors.HexColor("#10A37F")
+PAPER = colors.HexColor("#F7F7F8")
+LINE = colors.HexColor("#E5E5E5")
+INK = colors.HexColor("#0D0D0D")
+SOFT = colors.HexColor("#5D5D5D")
 GREEN = colors.HexColor("#2F7D4F")
 RED = colors.HexColor("#B3261E")
 
@@ -136,7 +136,7 @@ def cover(canvas, doc):
     canvas.drawString(20 * mm, h * 0.50 - 37 * mm, SITE)
     canvas.setFont("Malgun", 9.5); canvas.setFillColor(SOFT)
     canvas.drawString(20 * mm, h * 0.50 - 52 * mm, "웹 브라우저 · 안드로이드 앱 · PC 프로그램에서 같은 계정, 같은 데이터로 사용합니다.")
-    canvas.drawString(20 * mm, 22 * mm, "2026년 10월 12일  ·  서버판 2.1")
+    canvas.drawString(20 * mm, 22 * mm, "2026년 10월 13일  ·  서버판 2.2")
     canvas.restoreState()
 
 
@@ -196,7 +196,8 @@ S += bullets(["10자 이상, 영문과 숫자를 모두 포함", "아이디를 �
 S += [Spacer(1, 4), P("<b>화면 구성</b>", BASE)]
 S += bullets([
     "왼쪽(폰은 아래쪽) 메뉴: 대시보드, 회계결의서, 장부/원장, 예산관리, 재무제표, 조회, 자산관리, 계약관리, 연도 마감/이월, 설정/백업 (조직 관리자는 <b>계정 관리</b>가 더 보임)",
-    "오른쪽 위: 내 이름·역할, <b>비밀번호 변경</b>, <b>로그아웃</b>, 그리고 저장 상태 표시 (<b>서버에 저장됨</b> / 저장 중... / 서버 저장 실패)",
+    "<b>왼쪽 아래</b>(폰은 <b>오른쪽 위</b>)의 내 이름 아이콘을 누르면 <b>비밀번호 변경</b>, <b>화면 모드(라이트·다크·시스템 설정)</b>, <b>로그아웃</b> 메뉴가 열립니다.",
+    "오른쪽 위의 저장 상태 표시: <b>서버에 저장됨</b> / 저장 중... / 서버 저장 실패",
     "다른 담당자가 바꾼 내용은 <b>60초마다 자동으로</b> 반영됩니다. 바로 보려면 새로고침하세요.",
 ])
 S += box("처음 접속하거나 한동안 쓰지 않은 뒤에는 \"데이터베이스를 깨우는 중입니다\"가 나오고 <b>최대 1분</b> 걸릴 수 있습니다. 고장이 아니며 자동으로 다시 시도하니 기다리면 됩니다.")

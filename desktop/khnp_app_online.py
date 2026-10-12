@@ -18,7 +18,7 @@ import webview
 
 APP_URL = os.environ.get("KHNP_APP_URL", "https://khnp-accounting.vercel.app/")
 APP_TITLE = "한수원노동조합 회계관리 시스템 (서버판)"
-APP_VERSION = "2.1"
+APP_VERSION = "2.2"
 # 사이트가 PC 프로그램 안에서 열렸는지 알아보도록 브라우저 식별 문자열 끝에 붙이는 표시
 USER_AGENT = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) "
               f"Chrome/130.0.0.0 Safari/537.36 Edg/130.0.0.0 KHNP-Desktop/{APP_VERSION}")
@@ -232,14 +232,18 @@ class Api:
 
 OFFLINE_HTML = """<!doctype html><html lang="ko"><head><meta charset="utf-8"><title>연결할 수 없음</title>
 <style>
- body{margin:0;font-family:'Malgun Gothic',sans-serif;background:#f6f4ee;color:#1d2733;display:flex;align-items:center;justify-content:center;height:100vh}
- .card{background:#fff;border:1px solid #ddd8c8;border-radius:8px;padding:32px 36px;max-width:440px}
- h2{margin:0 0 10px;font-size:19px} p{line-height:1.7;font-size:14px;color:#555}
- button{margin-top:10px;padding:9px 18px;border:0;border-radius:6px;background:#1f3a5a;color:#fff;font-size:14px;cursor:pointer}
- #msg{color:#b3261e;margin-top:10px;min-height:20px}
+ :root{--bg:#fff;--card:#fff;--text:#0d0d0d;--soft:#5d5d5d;--border:#e5e5e5;--btn:#0d0d0d;--btn-text:#fff}
+ @media (prefers-color-scheme:dark){:root{--bg:#212121;--card:#272727;--text:#ececec;--soft:#b4b4b4;--border:#383838;--btn:#fff;--btn-text:#0d0d0d}}
+ body{margin:0;font-family:'Pretendard Variable',Pretendard,'Segoe UI','Malgun Gothic',sans-serif;background:var(--bg);color:var(--text);display:flex;align-items:center;justify-content:center;height:100vh}
+ .card{background:var(--card);border:1px solid var(--border);border-radius:24px;padding:36px 38px;max-width:420px;text-align:center}
+ .logo{width:46px;height:46px;border-radius:15px;background:var(--btn);color:var(--btn-text);display:grid;place-items:center;font-weight:700;font-size:15px;margin:0 auto 16px}
+ h2{margin:0 0 10px;font-size:21px;letter-spacing:-0.02em} p{line-height:1.7;font-size:14px;color:var(--soft);margin:0}
+ button{margin-top:18px;padding:10px 22px;border:0;border-radius:999px;background:var(--btn);color:var(--btn-text);font-size:14px;font-weight:600;cursor:pointer}
+ button:disabled{opacity:.5} #msg{color:#dc2626;margin-top:12px;min-height:20px;font-size:13px}
 </style></head><body><div class="card">
+<div class="logo">회계</div>
 <h2>서버에 연결할 수 없습니다</h2>
-<p>이 프로그램은 서버에 로그인해서 사용합니다. 인터넷 연결을 확인한 뒤 [다시 연결]을 눌러 주세요.</p>
+<p>이 프로그램은 서버에 로그인해서 사용합니다.<br>인터넷 연결을 확인한 뒤 [다시 연결]을 눌러 주세요.</p>
 <button id="b" onclick="go()">다시 연결</button><div id="msg"></div>
 </div>
 <script>

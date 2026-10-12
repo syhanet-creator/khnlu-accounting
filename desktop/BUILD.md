@@ -9,8 +9,8 @@
 ## 빌드 (짧은 경로에서 실행 권장)
 ```
 cd desktop
-python -m PyInstaller --noconfirm --clean --onefile --windowed --name "KHNP-UnionAccounting-Online" khnp_app_online.py
-python -m PyInstaller --noconfirm --clean --onefile --windowed --name "KHNP-Online-Installer" --add-data "dist\KHNP-UnionAccounting-Online.exe;." khnp_installer_online.py
+python -m PyInstaller --noconfirm --clean --onefile --windowed --icon KHNP.ico --name "KHNP-UnionAccounting-Online" khnp_app_online.py
+python -m PyInstaller --noconfirm --clean --onefile --windowed --icon KHNP.ico --name "KHNP-Online-Installer" --add-data "dist\KHNP-UnionAccounting-Online.exe;." khnp_installer_online.py
 ```
 결과: `dist\KHNP-UnionAccounting-Online.exe`(프로그램), `dist\KHNP-Online-Installer.exe`(설치 프로그램).
 
@@ -30,3 +30,4 @@ python -m PyInstaller --noconfirm --clean --onefile --windowed --name "KHNP-Onli
 ## 버전 기록
 - 2.0: 서버 사이트를 여는 창 + 증빙 파일(PC 저장)
 - 2.1: 사이트가 만든 "증빙 포함 PDF"를 기본 PDF 프로그램으로 열기(`open_pdf_bytes`), 사용자 식별 문자열에 `KHNP-Desktop/2.1` 표시
+- 2.2: 새 디자인(검정+녹색 아이콘 KHNP.ico, 연결 끊김 안내 화면 스타일). `icons/make_icons.py`가 아니라 `docs/make_icons.py`로 PNG/ICO를 다시 만든다.
