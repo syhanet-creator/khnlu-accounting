@@ -21,3 +21,12 @@ python -m PyInstaller --noconfirm --clean --onefile --windowed --name "KHNP-Onli
   첨부 폴더 밖 경로는 거부됩니다.
 - 우리 서버 주소가 아닌 페이지로 이동하면 자동으로 처음 화면으로 되돌립니다.
 - 인터넷에 연결되지 않으면 안내 화면이 나오고 [다시 연결]로 재시도합니다.
+
+## 배포 (사이트에서 내려받게 하기)
+1. 위 빌드로 만든 `dist\KHNP-Online-Installer.exe`를 확인한다 (현재 버전은 `khnp_installer_online.py`의 `APP_VERSION`, `khnp_app_online.py`의 `APP_VERSION`).
+2. 저장소 루트에서 `node desktop/upload_installer.js <설치프로그램 경로> <버전>` 실행 → 비공개 컨테이너 `downloads`에 올라간다.
+3. 사이트는 로그인한 PC(Windows) 브라우저에 안내 배너와 설정/백업 카드로 `설치 파일 내려받기`를 보여 준다 (`/api/files/app_info`, `/api/files/app_download`). 파일은 로그인 사용자에게만 5분짜리 임시 주소로 제공된다.
+
+## 버전 기록
+- 2.0: 서버 사이트를 여는 창 + 증빙 파일(PC 저장)
+- 2.1: 사이트가 만든 "증빙 포함 PDF"를 기본 PDF 프로그램으로 열기(`open_pdf_bytes`), 사용자 식별 문자열에 `KHNP-Desktop/2.1` 표시

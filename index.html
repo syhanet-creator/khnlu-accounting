@@ -1353,6 +1353,66 @@ function hasDesktopApi() {
   return typeof window !== "undefined" && !!window.pywebview && !!window.pywebview.api;
 }
 
+
+// PC 프로그램(서버판) 안에서 열렸는지: 프로그램이 브라우저 식별 문자열에 표시를 붙이고, 준비가 끝나면 pywebview 객체도 생긴다.
+function isDesktopApp() {
+  return hasDesktopApi() || /KHNP-Desktop/.test(navigator.userAgent || "");
+}
+function isWindowsPc() {
+  const ua = navigator.userAgent || "";
+  return /Windows NT/.test(ua) && !/Android|Mobile/.test(ua);
+}
+const INSTALL_BANNER_KEY = "khnp_install_banner_v1";
+
+// PC 프로그램 설치 파일 내려받기 안내. 설치 파일은 서버의 비공개 저장소에 있고, 로그인한 사용자에게만 임시 주소를 준다.
+// variant: "banner"(화면 위쪽 한 줄 안내, 닫을 수 있음) | "card"(설정 화면 카드)
+function DesktopInstall({ variant, onDismiss }) {
+  const [info, setInfo] = useState(null);
+  const [busy, setBusy] = useState(false);
+  const [desktop, setDesktop] = useState(isDesktopApp());
+  useEffect(() => {
+    const h = () => setDesktop(isDesktopApp());
+    window.addEventListener("pywebviewready", h);
+    return () => window.removeEventListener("pywebviewready", h);
+  }, []);
+  useEffect(() => {
+    apiCall("files/app_info").then(r => setInfo(r)).catch(() => setInfo({ available: false }));
+  }, []);
+  if (desktop || !isWindowsPc() || !info || !info.available) return null;
+
+  async function download() {
+    if (busy) return;
+    setBusy(true);
+    try {
+      const r = await apiRetrying("files/app_download", { method: "POST", body: {} });
+      const a = document.createElement("a");
+      a.href = r.url; a.rel = "noopener";
+      document.body.appendChild(a); a.click(); a.remove();
+    } catch (e) {
+      alert(e.message);
+    } finally {
+      setBusy(false);
+    }
+  }
+  const sizeText = info.size ? ` (${fmtFileSize(info.size)})` : "";
+  const btn = React.createElement(Btn, { variant: "primary", size: "sm", icon: "download", onClick: download, disabled: busy }, busy ? "준비 중..." : `설치 파일 내려받기${sizeText}`);
+
+  if (variant === "banner") {
+    return React.createElement("div", { className: "note-text", style: { display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" } },
+      React.createElement("span", { style: { flex: 1, minWidth: 240 } }, "PC 프로그램(서버판)을 설치하면 화면 확대·축소와 증빙 포함 인쇄를 더 편하게 쓸 수 있습니다. 같은 계정으로 로그인합니다."),
+      btn,
+      React.createElement(Btn, { variant: "ghost", size: "sm", onClick: onDismiss }, "다시 보지 않기")
+    );
+  }
+  return React.createElement(Card, { title: "PC 프로그램 (서버판)", subtitle: "Windows PC용 설치 프로그램입니다. 웹 브라우저와 같은 계정·같은 데이터를 사용합니다." },
+    React.createElement("p", { className: "note-text" }, "설치 후 시작 메뉴·바탕화면의 \"한수원노동조합 회계관리 시스템 (서버판)\"을 열어 로그인합니다. 인터넷 연결이 필요합니다. 처음 실행할 때 Windows가 \"PC를 보호했습니다\" 경고를 띄우면 [추가 정보] → [실행]을 누르세요(개인 배포용 프로그램이라 디지털 서명이 없습니다)."),
+    React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" } },
+      btn,
+      React.createElement("span", { className: "muted", style: { fontSize: 12 } }, `버전 ${info.version || "-"}${info.updatedAt ? " · " + new Date(info.updatedAt).toLocaleDateString("ko-KR") : ""}`)
+    )
+  );
+}
+
 // 회계결의서 증빙 / 계약서 등 첨부파일 관리.
 // 새 첨부는 서버(Azure Blob)에 저장되어 웹·안드로이드 앱·PC 프로그램 어디서든 열 수 있다.
 // 예전 PC 프로그램(EXE)에서 이 PC에만 저장했던 첨부(path)는 그 PC의 프로그램에서만 열린다.
@@ -1996,16 +2056,231 @@ function VoucherForm({ data, voucher, readOnly, onChange, onSave, onCancel, acco
           onChange: next => update({ attachments: next })
         }))
     ),
-    React.createElement(VoucherPrintActions, { voucher: v, onCancel, onSave, balanced, readOnly })
+    React.createElement(VoucherPrintActions, { voucher: v, data, onCancel, onSave, balanced, readOnly })
   );
+}
+
+// ===== 증빙 포함 일괄인쇄 =====
+// 결의서 한 장 + 서버에 첨부된 증빙(PDF·사진)을 하나의 PDF로 합쳐 열어 준다. 그 PDF를 한 번 인쇄하면 순서대로 모두 나온다.
+// 합치기에 쓰는 라이브러리는 필요할 때만 내려받고(무결성 해시로 검증), 파일은 브라우저 안에서만 처리된다.
+const PRINT_LIBS = [
+  { global: "PDFLib", src: "https://cdnjs.cloudflare.com/ajax/libs/pdf-lib/1.17.1/pdf-lib.min.js", integrity: "sha384-weMABwrltA6jWR8DDe9Jp5blk+tZQh7ugpCsF3JwSA53WZM9/14PjS5LAJNHNjAI" },
+  { global: "html2canvas", src: "https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js", integrity: "sha384-ZZ1pncU3bQe8y31yfZdMFdSpttDoPmOZg2wguVK9almUodir1PghgT0eY7Mrty8H" },
+];
+let printLibsPromise = null;
+function loadPrintLibs() {
+  if (!printLibsPromise) {
+    printLibsPromise = Promise.all(PRINT_LIBS.map(lib => window[lib.global] ? Promise.resolve() : new Promise((resolve, reject) => {
+      const s = document.createElement("script");
+      s.src = lib.src; s.integrity = lib.integrity; s.crossOrigin = "anonymous";
+      s.onload = resolve;
+      s.onerror = () => reject(new Error("인쇄에 필요한 구성요소를 불러오지 못했습니다. 인터넷 연결을 확인해 주세요."));
+      document.head.appendChild(s);
+    }))).catch(e => { printLibsPromise = null; throw e; });
+  }
+  return printLibsPromise;
+}
+
+// 결의서 한 장을 인쇄용 화면(A4 폭)으로 그린다. 입력창이 아닌 고정 표라서 어떤 기기에서도 같은 모양으로 나온다.
+function buildVoucherPrintNode(v, data) {
+  const accMap = {};
+  FLAT_ACCOUNTS.forEach(a => { accMap[a.id] = a; });
+  const el = (tag, style, text) => { const n = document.createElement(tag); if (style) n.setAttribute("style", style); if (text !== undefined && text !== null) n.textContent = text; return n; };
+  const B = "border:1px solid #333;";
+  const root = el("div", "position:fixed;left:-10000px;top:0;width:794px;box-sizing:border-box;padding:44px 48px;background:#fff;color:#111;font-family:'Malgun Gothic','Noto Sans KR','Apple SD Gothic Neo',sans-serif;font-size:13px;line-height:1.5;");
+
+  root.appendChild(el("div", "text-align:center;font-size:26px;font-weight:700;letter-spacing:10px;padding-left:10px;", "회 계 결 의 서"));
+  root.appendChild(el("div", "text-align:center;color:#555;margin:4px 0 14px;", data.orgName || data.org || ""));
+
+  // 결재 도장 칸
+  const steps = data.approvalSteps || [];
+  const strip = el("table", "border-collapse:collapse;margin:0 0 14px auto;");
+  const head = el("tr"), body = el("tr");
+  steps.forEach(step => {
+    head.appendChild(el("th", B + "padding:3px 8px;min-width:78px;font-size:12px;background:#f1efe7;", step));
+    const ap = v.approvals && v.approvals[step];
+    const cell = el("td", B + "height:58px;text-align:center;vertical-align:middle;font-size:11px;");
+    if (ap && ap.approved) {
+      cell.appendChild(el("div", "font-size:15px;font-weight:700;color:#b3261e;", "승인"));
+      cell.appendChild(el("div", "", ap.by || ""));
+      cell.appendChild(el("div", "color:#555;", ap.at ? String(ap.at).slice(0, 10) : ""));
+    }
+    body.appendChild(cell);
+  });
+  strip.appendChild(head); strip.appendChild(body);
+  root.appendChild(strip);
+
+  // 기본 정보
+  const typeLabel = { income: "수입", expense: "지출", transfer: "대체" }[v.voucherType] || "";
+  const contract = (data.contracts || []).find(c => c.id === v.linkedContractId);
+  const meta = el("table", "border-collapse:collapse;width:100%;margin-bottom:12px;");
+  const lab = "background:#f1efe7;font-weight:700;width:86px;" + B + "padding:5px 8px;";
+  const val = B + "padding:5px 8px;";
+  const row = (pairs) => { const tr = el("tr"); pairs.forEach(([l, t, span]) => { tr.appendChild(el("td", lab, l)); const td = el("td", val, t); if (span) td.setAttribute("colspan", span); tr.appendChild(td); }); meta.appendChild(tr); };
+  row([["문서번호", v.docNo || "(저장 시 부여)"], ["작성일자", v.date || ""]]);
+  row([["전표구분", typeLabel], ["집행부서", v.department || ""]]);
+  row([["제목", v.title || "", 3]]);
+  row([["목적", v.purpose || "", 3]]);
+  if (contract) row([["관련 계약", `${contract.title} (${fmtNum(contract.amount)}원)`, 3]]);
+  if (v.createdByName) row([["작성자", v.createdByName, 3]]);
+  root.appendChild(meta);
+
+  // 계정 내역
+  const tbl = el("table", "border-collapse:collapse;width:100%;");
+  const hr = el("tr");
+  [["No", "34px"], ["계정과목", ""], ["적요", ""], ["차변금액", "104px"], ["대변금액", "104px"]].forEach(([t, w]) => hr.appendChild(el("th", B + "padding:5px 6px;background:#f1efe7;" + (w ? `width:${w};` : ""), t)));
+  tbl.appendChild(hr);
+  (v.lines || []).forEach((l, i) => {
+    const tr = el("tr");
+    const acc = accMap[l.account];
+    tr.appendChild(el("td", B + "padding:4px 6px;text-align:center;", String(i + 1)));
+    tr.appendChild(el("td", B + "padding:4px 6px;", acc ? (acc.fullName || acc.displayName) : (l.account || "")));
+    tr.appendChild(el("td", B + "padding:4px 6px;", l.note || ""));
+    tr.appendChild(el("td", B + "padding:4px 6px;text-align:right;", Number(l.debit) > 0 ? fmtNum(l.debit) : ""));
+    tr.appendChild(el("td", B + "padding:4px 6px;text-align:right;", Number(l.credit) > 0 ? fmtNum(l.credit) : ""));
+    tbl.appendChild(tr);
+  });
+  const tot = el("tr");
+  const tcell = el("td", B + "padding:5px 6px;text-align:center;font-weight:700;background:#f7f5ee;", "합계"); tcell.setAttribute("colspan", "3");
+  tot.appendChild(tcell);
+  tot.appendChild(el("td", B + "padding:5px 6px;text-align:right;font-weight:700;background:#f7f5ee;", fmtNum(voucherTotal(v, "debit"))));
+  tot.appendChild(el("td", B + "padding:5px 6px;text-align:right;font-weight:700;background:#f7f5ee;", fmtNum(voucherTotal(v, "credit"))));
+  tbl.appendChild(tot);
+  root.appendChild(tbl);
+
+  // 입(출)금처 · 증빙 메모 · 첨부 목록
+  const foot = el("table", "border-collapse:collapse;width:100%;margin-top:12px;");
+  const frow = (l, t) => { const tr = el("tr"); tr.appendChild(el("td", lab, l)); tr.appendChild(el("td", val, t)); foot.appendChild(tr); };
+  frow("입(출)금처", [v.payee, v.payeeName].filter(Boolean).join(" / "));
+  if (v.attachNote) frow("증빙 메모", v.attachNote);
+  const names = (v.attachments || []).map(a => a.name).filter(Boolean);
+  frow("첨부 증빙", names.length ? `${names.length}건 — ${names.join(", ")}` : "없음");
+  root.appendChild(foot);
+
+  root.appendChild(el("div", "margin-top:14px;font-size:11px;color:#777;text-align:right;", `출력일시 ${new Date().toLocaleString("ko-KR")}`));
+  return root;
+}
+
+async function fetchAttachmentBytes(a) {
+  const r = await apiRetrying("files/download_url", { method: "POST", body: { blob: a.blob, name: a.name, download: true } });
+  const res = await fetch(r.url);
+  if (!res.ok) throw new Error(`"${a.name}" 파일을 내려받지 못했습니다. (${res.status})`);
+  return new Uint8Array(await res.arrayBuffer());
+}
+
+// 사진을 JPEG로 다시 그린다. 폰 사진의 회전 정보가 적용되고(바로 선 모양으로 인쇄), 투명 배경은 흰색이 된다.
+async function rasterizeToJpeg(bytes, mime) {
+  const bmp = await createImageBitmap(new Blob([bytes], { type: mime }));
+  const scale = Math.min(1, 2600 / Math.max(bmp.width, bmp.height));
+  const c = document.createElement("canvas");
+  c.width = Math.max(1, Math.round(bmp.width * scale)); c.height = Math.max(1, Math.round(bmp.height * scale));
+  const ctx = c.getContext("2d");
+  ctx.fillStyle = "#fff"; ctx.fillRect(0, 0, c.width, c.height);
+  ctx.drawImage(bmp, 0, 0, c.width, c.height);
+  return { dataUrl: c.toDataURL("image/jpeg", 0.9), width: c.width, height: c.height };
+}
+
+const A4_W = 595.28, A4_H = 841.89;
+
+async function buildPrintPackage(voucher, data, onProgress) {
+  await loadPrintLibs();
+  const { PDFDocument } = window.PDFLib;
+  const pdf = await PDFDocument.create();
+
+  // 1) 결의서 본문 (길면 여러 쪽으로 자른다)
+  if (onProgress) onProgress("결의서 만드는 중...");
+  const node = buildVoucherPrintNode(voucher, data);
+  document.body.appendChild(node);
+  let canvas;
+  try {
+    canvas = await window.html2canvas(node, { scale: 2, backgroundColor: "#ffffff", windowWidth: 794, logging: false, onclone: (doc, el) => { el.style.position = "static"; el.style.left = "0"; } });
+  } finally { node.remove(); }
+  const sliceH = Math.floor(canvas.width * A4_H / A4_W);
+  for (let y = 0; y < canvas.height; y += sliceH) {
+    const h = Math.min(sliceH, canvas.height - y);
+    const part = document.createElement("canvas");
+    part.width = canvas.width; part.height = h;
+    part.getContext("2d").drawImage(canvas, 0, y, canvas.width, h, 0, 0, canvas.width, h);
+    const img = await pdf.embedJpg(part.toDataURL("image/jpeg", 0.92));
+    const page = pdf.addPage([A4_W, A4_H]);
+    page.drawImage(img, { x: 0, y: A4_H - h * (A4_W / canvas.width), width: A4_W, height: h * (A4_W / canvas.width) });
+  }
+
+  // 2) 증빙: PDF는 쪽을 그대로 이어 붙이고, 사진은 한 쪽에 한 장씩 맞춰 넣는다
+  const items = (voucher.attachments || []).filter(a => a.blob);
+  const skipped = [];
+  for (let i = 0; i < items.length; i++) {
+    const a = items[i];
+    if (onProgress) onProgress(`증빙 ${i + 1}/${items.length} 합치는 중...`);
+    const ext = (a.blob.split(".").pop() || "").toLowerCase();
+    try {
+      const bytes = await fetchAttachmentBytes(a);
+      if (ext === "pdf") {
+        const src = await PDFDocument.load(bytes, { ignoreEncryption: true });
+        const pages = await pdf.copyPages(src, src.getPageIndices());
+        pages.forEach(p => pdf.addPage(p));
+      } else if (["jpg", "jpeg", "png", "webp"].includes(ext)) {
+        const mime = ext === "png" ? "image/png" : ext === "webp" ? "image/webp" : "image/jpeg";
+        const im = await rasterizeToJpeg(bytes, mime);
+        const landscape = im.width > im.height * 1.1;
+        const pw = landscape ? A4_H : A4_W, ph = landscape ? A4_W : A4_H, m = 28;
+        const k = Math.min((pw - 2 * m) / im.width, (ph - 2 * m) / im.height);
+        const w = im.width * k, h = im.height * k;
+        const page = pdf.addPage([pw, ph]);
+        page.drawImage(await pdf.embedJpg(im.dataUrl), { x: (pw - w) / 2, y: (ph - h) / 2, width: w, height: h });
+      } else {
+        skipped.push(a.name);
+      }
+    } catch (e) {
+      skipped.push(a.name);
+    }
+  }
+  pdf.setTitle(`${voucher.docNo || "회계결의서"} (증빙 포함)`);
+  return { bytes: await pdf.save(), skipped, included: items.length - skipped.length };
+}
+
+// 만든 PDF를 연다. PC 프로그램(EXE 서버판 2.1 이상)은 기본 PDF 프로그램으로, 브라우저·앱은 새 탭으로 열린다.
+async function deliverPdf(pdfBytes, fileName) {
+  const desktop = hasDesktopApi();
+  if (desktop && window.pywebview.api.open_pdf_bytes) {
+    let bin = "";
+    for (let i = 0; i < pdfBytes.length; i += 0x8000) bin += String.fromCharCode.apply(null, pdfBytes.subarray(i, i + 0x8000));
+    let ok = false;
+    try { ok = await window.pywebview.api.open_pdf_bytes(btoa(bin), fileName); } catch (e) {}
+    if (ok) return;
+  }
+  const url = URL.createObjectURL(new Blob([pdfBytes], { type: "application/pdf" }));
+  const a = document.createElement("a");
+  a.href = url; a.rel = "noopener";
+  if (desktop) a.download = fileName; else a.target = "_blank"; // 예전 PC 프로그램: 저장 창으로 내려받기
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 10 * 60 * 1000);
 }
 
 // 인쇄(서명용) 단독 인쇄 / 증빙파일 포함 일괄 인쇄를 처리한다.
 // window.print()는 브라우저 네이티브 인쇄창을 띄우며, 창이 닫히는 시점(afterprint)에
 // 이어서 첨부된 PDF 증빙을 기본 프린터로 전송한다(각 파일을 연결 프로그램의 인쇄 기능으로 전달).
-function VoucherPrintActions({ voucher, onCancel, onSave, balanced, readOnly }) {
+function VoucherPrintActions({ voucher, data, onCancel, onSave, balanced, readOnly }) {
   const pendingRef = useRef(false);
+  const [pkgBusy, setPkgBusy] = useState("");
   const attachments = voucher.attachments || [];
+  const blobAttachments = attachments.filter(a => a.blob);
+
+  // 결의서 + 서버에 저장된 증빙을 하나의 PDF로 합쳐 연다
+  async function printPackage() {
+    if (pkgBusy) return;
+    setPkgBusy("준비 중...");
+    try {
+      const r = await buildPrintPackage(voucher, data, setPkgBusy);
+      const base = String(voucher.docNo || "회계결의서").replace(/[\\/:*?"<>|]+/g, "_");
+      await deliverPdf(r.bytes, `${base}_증빙포함.pdf`);
+      if (r.skipped.length) alert(`다음 파일은 PDF에 합칠 수 없어 제외했습니다. 해당 파일은 직접 열어서 인쇄해 주세요.\n\n- ${r.skipped.join("\n- ")}`);
+    } catch (e) {
+      alert("증빙 포함 PDF를 만들지 못했습니다.\n" + e.message);
+    } finally {
+      setPkgBusy("");
+    }
+  }
 
   useEffect(() => {
     function onAfterPrint() {
@@ -2034,6 +2309,10 @@ function VoucherPrintActions({ voucher, onCancel, onSave, balanced, readOnly }) 
   return React.createElement("div", { className: "voucher-actions" },
     React.createElement(Btn, { variant: "ghost", onClick: onCancel }, readOnly ? "닫기" : "취소"),
     React.createElement(Btn, { variant: "outline", icon: "print", onClick: printOnly }, "인쇄(서명용)"),
+    blobAttachments.length > 0 && React.createElement(Btn, {
+      variant: "outline", icon: "print", disabled: !!pkgBusy, onClick: printPackage,
+      title: "결의서와 첨부 증빙(PDF·사진)을 하나의 PDF로 합쳐 엽니다. 열린 PDF를 인쇄하세요."
+    }, pkgBusy || `증빙 포함 일괄인쇄 (${blobAttachments.length})`),
     hasDesktopApi() && attachments.some(a => a.path) && React.createElement(Btn, {
       variant: "outline", icon: "print", onClick: printWithAttachments
     }, `증빙 포함 일괄인쇄 (${attachments.filter(a => a.path).length})`),
@@ -2751,6 +3030,7 @@ function SettingsScreen({ data, isAdmin, onImport, saveStatus, menuClickTotal })
       ),
       isAdmin && React.createElement("p", { style: { color: "var(--ink-soft)", fontSize: 12, marginTop: 8 } }, "가져오기는 서버에 데이터가 하나도 없는 조직에서만 할 수 있습니다(조직 관리자 전용).")
     ),
+    React.createElement(DesktopInstall, { variant: "card" }),
     React.createElement(Card, { title: "회계 규정 참고", subtitle: "한수원노동조합 회계규정 주요 조항" },
       React.createElement("ul", { className: "rule-list" },
         React.createElement("li", null, "제3조: 회계연도는 매년 4월 1일부터 익년 3월 31일까지"),
@@ -3410,6 +3690,11 @@ function MainApp({ authUser, onLogout, initialData }) {
   const [lastSavedAt, setLastSavedAt] = useState(null);
   const [menuClickTotal, setMenuClickTotal] = useState(0); // 사이드바 메뉴 클릭 수 합계(MongoDB 집계)
   const [localData, setLocalData] = useState(() => authUser.role === "admin" ? findLocalDataToMigrate() : null);
+  const [installDismissed, setInstallDismissed] = useState(() => { try { return localStorage.getItem(INSTALL_BANNER_KEY) === "1"; } catch (e) { return false; } });
+  function dismissInstallBanner() {
+    setInstallDismissed(true);
+    try { localStorage.setItem(INSTALL_BANNER_KEY, "1"); } catch (e) {}
+  }
   const isMobile = useIsMobile();
   const inflight = useRef(0);
   const budgetTimers = useRef({});
@@ -3696,6 +3981,7 @@ function MainApp({ authUser, onLogout, initialData }) {
         nav === "voucher" && editingVoucher && React.createElement(Btn, { variant: "ghost", size: "sm", onClick: () => setEditingVoucher(null) }, "목록으로")
       ),
       React.createElement("div", { className: "content" },
+        !isMobile && !installDismissed && React.createElement(DesktopInstall, { variant: "banner", onDismiss: dismissInstallBanner }),
         isAdmin && localData && data.vouchers.length === 0 && data.contracts.length === 0 && data.fixedAssets.length === 0 && Object.keys(data.budgets).length === 0 && React.createElement("div", { className: "note-text", style: { display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" } },
           React.createElement("span", { style: { flex: 1, minWidth: 220 } }, "이 PC 브라우저에 서버 도입 전에 저장해 둔 기존 데이터가 있습니다. 서버로 옮기면 모든 담당자가 함께 사용할 수 있습니다."),
           React.createElement(Btn, { variant: "primary", size: "sm", onClick: migrateLocal }, "기존 데이터를 서버로 옮기기")

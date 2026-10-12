@@ -17,7 +17,44 @@ async function requireUser(req, roles) {
   return me;
 }
 
+// 설치 파일 정보(없으면 null). 파일 자체는 올리지 않고 속성만 읽는다.
+async function installerInfo() {
+  try {
+    const props = await blob.installerContainer().getBlockBlobClient(blob.INSTALLER_BLOB).getProperties();
+    return { version: (props.metadata && props.metadata.version) || "", size: props.contentLength, updatedAt: props.lastModified };
+  } catch (e) {
+    if (e && (e.statusCode === 404 || e.code === "BlobNotFound" || e.code === "ContainerNotFound")) return null;
+    throw e;
+  }
+}
+
 const handlers = {
+  // PC 프로그램(서버판) 설치 파일 안내: 로그인한 모든 사용자가 볼 수 있다.
+  async app_info(req, res) {
+    if (!guard(req, res, ["GET"])) return;
+    const me = await getSessionUser(req);
+    if (!me) throw new HttpError(401, "로그인이 필요합니다.");
+    const info = await installerInfo();
+    send(res, 200, info ? { available: true, filename: blob.INSTALLER_FILENAME, ...info } : { available: false });
+  },
+
+  // 설치 파일 내려받기용 임시 주소(5분). 로그인한 사용자만.
+  async app_download(req, res) {
+    if (!guard(req, res, ["POST"])) return;
+    const me = await getSessionUser(req);
+    if (!me) throw new HttpError(401, "로그인이 필요합니다.");
+    if (me.mustChangePassword) throw new HttpError(403, "먼저 비밀번호를 변경해 주세요.");
+    const info = await installerInfo();
+    if (!info) throw new HttpError(404, "설치 파일이 아직 준비되지 않았습니다. 관리자에게 문의하세요.");
+    const url = blob.sasUrl(blob.INSTALLER_BLOB, "r", 5, {
+      container: blob.installerContainer(),
+      contentType: "application/octet-stream",
+      contentDisposition: blob.dispositionFor("attachment", blob.INSTALLER_FILENAME),
+    });
+    await audit({ orgId: me.orgId, userId: me.id, loginId: me.loginId, action: "installer_download", target: blob.INSTALLER_BLOB, detail: `v${info.version}`, ip: clientIp(req) });
+    send(res, 200, { url, filename: blob.INSTALLER_FILENAME, ...info });
+  },
+
   // 올리기 전에: 종류·크기를 확인하고 한 파일에만 유효한 업로드 주소(10분)를 발급한다.
   async upload_url(req, res) {
     if (!guard(req, res, ["POST"])) return;

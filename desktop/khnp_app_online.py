@@ -3,10 +3,12 @@
 서버(https://khnp-accounting.vercel.app)에 로그인해서 쓰는 창이다. 데이터는 서버(Azure SQL)에 저장되고,
 이 프로그램은 서버 버전에서 지원하지 않는 PC 기능(증빙 파일 첨부·열기·인쇄)만 제공한다.
 """
+import base64
 import ctypes
 import os
 import shutil
 import sys
+import tempfile
 import time
 import urllib.error
 import urllib.request
@@ -16,6 +18,12 @@ import webview
 
 APP_URL = os.environ.get("KHNP_APP_URL", "https://khnp-accounting.vercel.app/")
 APP_TITLE = "한수원노동조합 회계관리 시스템 (서버판)"
+APP_VERSION = "2.1"
+# 사이트가 PC 프로그램 안에서 열렸는지 알아보도록 브라우저 식별 문자열 끝에 붙이는 표시
+USER_AGENT = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) "
+              f"Chrome/130.0.0.0 Safari/537.36 Edg/130.0.0.0 KHNP-Desktop/{APP_VERSION}")
+PRINT_TEMP_DIR = os.path.join(tempfile.gettempdir(), "KHNP-Print")
+MAX_PDF_BYTES = 120 * 1024 * 1024
 ALLOWED_HOSTS = {urlparse(APP_URL).hostname}
 
 DATA_DIR_NAME = "KHNP-UnionAccounting-Online"   # 로그인 쿠키 등 웹뷰 프로필
@@ -81,6 +89,18 @@ def _page_is_ours(window=None):
     except Exception:
         return False
     return urlparse(url).hostname in ALLOWED_HOSTS
+
+
+def _cleanup_print_temp(max_age_sec=24 * 3600):
+    """임시 PDF는 하루가 지나면 지운다."""
+    try:
+        now = time.time()
+        for fn in os.listdir(PRINT_TEMP_DIR):
+            fp = os.path.join(PRINT_TEMP_DIR, fn)
+            if fn.lower().endswith(".pdf") and os.path.isfile(fp) and now - os.path.getmtime(fp) > max_age_sec:
+                os.remove(fp)
+    except Exception:
+        pass
 
 
 def reachable(timeout=6):
@@ -180,6 +200,28 @@ class Api:
         except Exception:
             return False
 
+    # 사이트가 합쳐 만든 "증빙 포함 PDF"를 임시 폴더에 저장하고 기본 PDF 프로그램으로 연다(거기서 인쇄).
+    def open_pdf_bytes(self, b64, name):
+        if not _page_is_ours() or not isinstance(b64, str):
+            return False
+        try:
+            data = base64.b64decode(b64, validate=True)
+        except Exception:
+            return False
+        if not data.startswith(b"%PDF") or len(data) > MAX_PDF_BYTES:
+            return False
+        try:
+            os.makedirs(PRINT_TEMP_DIR, exist_ok=True)
+            _cleanup_print_temp()
+            stem = safe_component(os.path.splitext(os.path.basename(str(name or "print")))[0], limit=60)
+            path = os.path.join(PRINT_TEMP_DIR, f"{time.strftime('%Y%m%d%H%M%S')}_{stem}.pdf")
+            with open(path, "wb") as f:
+                f.write(data)
+            os.startfile(path)
+            return True
+        except Exception:
+            return False
+
     # 인터넷이 끊겼을 때 보이는 안내 화면의 [다시 연결] 버튼에서 호출한다.
     def retry(self):
         if reachable():
@@ -236,7 +278,7 @@ def main():
             window.load_url(APP_URL)
 
     window.events.loaded += on_loaded
-    webview.start(private_mode=False, storage_path=app_data_dir())
+    webview.start(private_mode=False, storage_path=app_data_dir(), user_agent=USER_AGENT)
 
 
 if __name__ == "__main__":

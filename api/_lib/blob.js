@@ -52,8 +52,9 @@ function client() {
 }
 
 // blobPath 한 개에만 유효한 임시 주소. perm: "w"(올리기) | "r"(내려받기)
-function sasUrl(blobPath, perm, minutes, { contentType, contentDisposition } = {}) {
-  const { credential, container } = client();
+function sasUrl(blobPath, perm, minutes, { contentType, contentDisposition, container: customContainer } = {}) {
+  const { credential, container: defaultContainer } = client();
+  const container = customContainer || defaultContainer;
   const now = Date.now();
   const sas = generateBlobSASQueryParameters({
     containerName: container.containerName,
@@ -68,6 +69,13 @@ function sasUrl(blobPath, perm, minutes, { contentType, contentDisposition } = {
   return `${container.getBlockBlobClient(blobPath).url}?${sas}`;
 }
 
+// PC 프로그램 설치 파일: 증빙과 별개의 비공개 컨테이너에 두고, 로그인한 사용자에게만 짧은 임시 주소를 준다.
+const INSTALLER_BLOB = "KHNP-Online-Installer.exe";
+const INSTALLER_FILENAME = "KHNP-노동조합회계관리_서버판_설치프로그램.exe";
+function installerContainer() {
+  return client().service.getContainerClient(process.env.AZURE_DOWNLOADS_CONTAINER || "downloads");
+}
+
 async function deleteBlob(blobPath) {
   const { container } = client();
   await container.getBlockBlobClient(blobPath).deleteIfExists();
@@ -79,4 +87,4 @@ function dispositionFor(kind, filename) {
   return `${kind}; filename="${encodeURIComponent(safe)}"; filename*=UTF-8''${encodeURIComponent(safe)}`;
 }
 
-module.exports = { TYPES, MAX_BYTES, CATEGORIES, BLOB_RE, isOrgBlob, extOf, client, sasUrl, deleteBlob, dispositionFor };
+module.exports = { TYPES, MAX_BYTES, CATEGORIES, BLOB_RE, isOrgBlob, extOf, client, sasUrl, deleteBlob, dispositionFor, INSTALLER_BLOB, INSTALLER_FILENAME, installerContainer };
