@@ -25,7 +25,7 @@ python -m PyInstaller --noconfirm --clean --onefile --windowed --name "KHNP-Onli
 ## 배포 (사이트에서 내려받게 하기)
 1. 위 빌드로 만든 `dist\KHNP-Online-Installer.exe`를 확인한다 (현재 버전은 `khnp_installer_online.py`의 `APP_VERSION`, `khnp_app_online.py`의 `APP_VERSION`).
 2. 저장소 루트에서 `node desktop/upload_installer.js <설치프로그램 경로> <버전>` 실행 → 비공개 컨테이너 `downloads`에 올라간다.
-3. 사이트는 로그인한 PC(Windows) 브라우저에 안내 배너와 설정/백업 카드로 `설치 파일 내려받기`를 보여 준다 (`/api/files/app_info`, `/api/files/app_download`). 파일은 로그인 사용자에게만 5분짜리 임시 주소로 제공된다.
+3. 사이트는 Windows PC 브라우저에 로그인 화면 버튼, 로그인 후 안내 배너, 설정/백업 카드(시스템관리자 화면 포함)로 `설치 파일 내려받기`를 보여 준다 (`/api/files/app_info`, `/api/files/app_download`). 파일은 비공개 저장소에 있고 5분짜리 임시 주소로 제공된다(로그인 전에도 가능, 같은 IP에서 1시간 10회 제한, 내려받기는 감사로그에 기록).
 
 ## 버전 기록
 - 2.0: 서버 사이트를 여는 창 + 증빙 파일(PC 저장)

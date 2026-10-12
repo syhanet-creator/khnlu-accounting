@@ -32,18 +32,20 @@ const handlers = {
   // PC 프로그램(서버판) 설치 파일 안내: 로그인한 모든 사용자가 볼 수 있다.
   async app_info(req, res) {
     if (!guard(req, res, ["GET"])) return;
-    const me = await getSessionUser(req);
-    if (!me) throw new HttpError(401, "로그인이 필요합니다.");
     const info = await installerInfo();
     send(res, 200, info ? { available: true, filename: blob.INSTALLER_FILENAME, ...info } : { available: false });
   },
 
-  // 설치 파일 내려받기용 임시 주소(5분). 로그인한 사용자만.
+  // 설치 파일 내려받기용 임시 주소(5분). 설치 파일은 사이트를 여는 창일 뿐 비밀 정보가 없어 로그인 전에도 받을 수 있게 하되,
+  // 남용(대역폭 비용)을 막기 위해 같은 IP에서 1시간에 10번까지만 허용한다.
   async app_download(req, res) {
     if (!guard(req, res, ["POST"])) return;
-    const me = await getSessionUser(req);
-    if (!me) throw new HttpError(401, "로그인이 필요합니다.");
-    if (me.mustChangePassword) throw new HttpError(403, "먼저 비밀번호를 변경해 주세요.");
+    const me = await getSessionUser(req); // 로그인했으면 기록에 남기고, 아니어도 허용
+    const ip = clientIp(req);
+    if (ip) {
+      const c = await run("SELECT COUNT(*) AS n FROM dbo.audit_log WHERE action = 'installer_download' AND ip = @ip AND at > DATEADD(hour, -1, SYSUTCDATETIME())", { ip: [sql.VarChar(45), ip] });
+      if (c.recordset[0].n >= 10) throw new HttpError(429, "내려받기 요청이 너무 많습니다. 잠시 후 다시 시도해 주세요.");
+    }
     const info = await installerInfo();
     if (!info) throw new HttpError(404, "설치 파일이 아직 준비되지 않았습니다. 관리자에게 문의하세요.");
     const url = blob.sasUrl(blob.INSTALLER_BLOB, "r", 5, {
@@ -51,7 +53,7 @@ const handlers = {
       contentType: "application/octet-stream",
       contentDisposition: blob.dispositionFor("attachment", blob.INSTALLER_FILENAME),
     });
-    await audit({ orgId: me.orgId, userId: me.id, loginId: me.loginId, action: "installer_download", target: blob.INSTALLER_BLOB, detail: `v${info.version}`, ip: clientIp(req) });
+    await audit({ orgId: me ? me.orgId : null, userId: me ? me.id : null, loginId: me ? me.loginId : null, action: "installer_download", target: blob.INSTALLER_BLOB, detail: `v${info.version}${me ? "" : " (로그인 전)"}`, ip });
     send(res, 200, { url, filename: blob.INSTALLER_FILENAME, ...info });
   },
 
