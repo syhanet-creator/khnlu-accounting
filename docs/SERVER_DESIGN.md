@@ -78,3 +78,10 @@ Azure SQL Database (khnp-accounting)
 5. **점검**: 권한 우회 시도(다른 조직 ID, 역할 외 API), 동시 수정, 감사로그, DB 일시중지 상황.
 
 각 단계는 배포해서 동작을 확인한 뒤 다음으로 넘어간다.
+
+## 7. 증빙 파일 (Azure Blob Storage) — 구현됨
+- 비공개 컨테이너 `evidence`, 경로 `{조직ID}/{voucher|contract}/{대상ID}/{파일ID}.{확장자}` (원래 파일 이름은 전표/계약 JSON에만 기록).
+- `api/files/[op].js`: 서버가 로그인·역할·조직을 확인하고 파일 한 개에만 유효한 임시 주소(SAS: 업로드 10분/다운로드 5분)를 발급 → 브라우저·앱이 Blob과 직접 주고받음(Vercel 요청 크기 제한 회피).
+- 형식은 확장자 허용 목록(PDF·사진·한글·오피스)으로 서버가 MIME을 정하며, 20MB 제한. 승인/결재 중 전표의 증빙은 삭제 불가. 삭제된 파일은 7일간 복구 가능(소프트 삭제).
+- 연결 문자열은 Vercel 환경변수 `AZURE_STORAGE_CONNECTION_STRING`/`AZURE_STORAGE_CONTAINER`에만 보관. 키 교체 시 두 곳(.env.local, Vercel)을 함께 갱신.
+- 알려진 한계: 올린 뒤 전표를 저장하지 않고 닫으면 파일이 고아로 남는다(용량 미미). 필요하면 주기적 정리 작업을 추가한다.

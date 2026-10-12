@@ -16,7 +16,8 @@ python -m PyInstaller --noconfirm --clean --onefile --windowed --name "KHNP-Onli
 
 ## 동작 메모
 - 다른 서버 주소로 시험하려면 환경변수 `KHNP_APP_URL`을 지정합니다.
-- 증빙 파일은 `%LOCALAPPDATA%\KHNP-UnionAccounting\증빙자료`(오프라인판과 같은 폴더)에 저장되고,
-  서버에는 이 폴더 기준 상대 경로만 기록됩니다. 첨부 폴더 밖 경로는 열기·인쇄·삭제가 거부됩니다.
+- 새 증빙 파일은 사이트가 서버(Azure Blob)에 올리므로 이 프로그램의 파일 API는 쓰이지 않습니다.
+  예전에 PC에만 저장했던 증빙(`%LOCALAPPDATA%\KHNP-UnionAccounting\증빙자료`)을 열기·인쇄·삭제하는 용도로만 남겨 두었고,
+  첨부 폴더 밖 경로는 거부됩니다.
 - 우리 서버 주소가 아닌 페이지로 이동하면 자동으로 처음 화면으로 되돌립니다.
 - 인터넷에 연결되지 않으면 안내 화면이 나오고 [다시 연결]로 재시도합니다.
