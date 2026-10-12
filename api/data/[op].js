@@ -101,13 +101,13 @@ async function loadVoucherView(orgId, id) {
   );
   if (!r.recordset[0]) throw new HttpError(404, "전표를 찾을 수 없습니다.");
   const a = await run(
-    `SELECT a.step_name, a.approved_at, u.display_name, ua.display_name AS acting_for_name
+    `SELECT a.step_name, a.approved_at, a.signature_id, u.display_name, ua.display_name AS acting_for_name
      FROM dbo.voucher_approvals a JOIN dbo.users u ON u.id = a.approved_by LEFT JOIN dbo.users ua ON ua.id = a.acting_for_user_id
      WHERE a.org_id = @org AND a.voucher_id = @id`,
     { org: [sql.Int, orgId], id: [sql.VarChar(40), id] }
   );
   const approvals = {};
-  a.recordset.forEach(x => { approvals[x.step_name] = { approved: true, by: x.display_name, at: x.approved_at, ...(x.acting_for_name ? { actingFor: x.acting_for_name } : {}) }; });
+  a.recordset.forEach(x => { approvals[x.step_name] = { approved: true, by: x.display_name, at: x.approved_at, ...(x.acting_for_name ? { actingFor: x.acting_for_name } : {}), ...(x.signature_id ? { signatureId: x.signature_id } : {}) }; });
   return voucherView(r.recordset[0], approvals);
 }
 
@@ -147,7 +147,7 @@ async function assemble(me) {
     { org: [sql.Int, me.orgId] }
   );
   const ar = await run(
-    `SELECT a.voucher_id, a.step_name, a.approved_at, u.display_name, ua.display_name AS acting_for_name FROM dbo.voucher_approvals a
+    `SELECT a.voucher_id, a.step_name, a.approved_at, a.signature_id, u.display_name, ua.display_name AS acting_for_name FROM dbo.voucher_approvals a
      JOIN dbo.users u ON u.id = a.approved_by LEFT JOIN dbo.users ua ON ua.id = a.acting_for_user_id WHERE a.org_id = @org`,
     { org: [sql.Int, me.orgId] }
   );
@@ -163,7 +163,7 @@ async function assemble(me) {
 
   const approvalMap = {};
   ar.recordset.forEach(a => {
-    (approvalMap[a.voucher_id] = approvalMap[a.voucher_id] || {})[a.step_name] = { approved: true, by: a.display_name, at: a.approved_at, ...(a.acting_for_name ? { actingFor: a.acting_for_name } : {}) };
+    (approvalMap[a.voucher_id] = approvalMap[a.voucher_id] || {})[a.step_name] = { approved: true, by: a.display_name, at: a.approved_at, ...(a.acting_for_name ? { actingFor: a.acting_for_name } : {}), ...(a.signature_id ? { signatureId: a.signature_id } : {}) };
   });
   const orgSteps = parseJson(org.approval_steps, []);
   const data = {
@@ -342,7 +342,9 @@ const handlers = {
       // 한 사람이 한 전표를 두 번 이상 결재할 수 없다(대결로 연속 승인하는 것 방지)
       if (rows.some(r => r.approved_by === me.id)) throw new HttpError(403, "이미 이 전표를 결재하셨습니다. 한 사람이 한 전표를 두 번 이상 결재할 수 없습니다.");
       actedStep = next; actingForId = act.actingFor;
-      await q("INSERT INTO dbo.voucher_approvals (org_id, voucher_id, step_name, approved_by, acting_for_user_id) VALUES (@org, @id, @step, @by, @acting)", { org: [sql.Int, me.orgId], id: [sql.VarChar(40), id], step: [sql.NVarChar(50), next], by: [sql.Int, me.id], acting: [sql.Int, actingForId] });
+      // 승인하는 사람 본인의 현재 서명을 그 결재 칸에 기록한다(대결이면 대결자의 서명). 서명이 없으면 비워 둔다.
+      const sigId = (await q("SELECT signature_id FROM dbo.users WHERE id = @me AND org_id = @org", { me: [sql.Int, me.id], org: [sql.Int, me.orgId] })).recordset[0].signature_id;
+      await q("INSERT INTO dbo.voucher_approvals (org_id, voucher_id, step_name, approved_by, acting_for_user_id, signature_id) VALUES (@org, @id, @step, @by, @acting, @sig)", { org: [sql.Int, me.orgId], id: [sql.VarChar(40), id], step: [sql.NVarChar(50), next], by: [sql.Int, me.id], acting: [sql.Int, actingForId], sig: [sql.Int, sigId] });
       finalStatus = steps.filter(s => done.has(s)).length + 1 >= steps.length ? "approved" : "pending";
       await q("UPDATE dbo.vouchers SET status = @s, version = version + 1, updated_by = @by, updated_at = SYSUTCDATETIME() WHERE org_id = @org AND id = @id", { s: [sql.VarChar(20), finalStatus], org: [sql.Int, me.orgId], id: [sql.VarChar(40), id], by: [sql.Int, me.id] });
     });

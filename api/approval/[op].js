@@ -1,5 +1,6 @@
-// 결재 설정 API: /api/approval/{lines|line_save|line_delete|people|delegations|delegation_save|delegation_cancel}
+// 결재 설정 API: /api/approval/{lines|line_save|line_delete|people|delegations|delegation_save|delegation_cancel|my_signature|signature_save|signature_delete|signature}
 // - 결재선(직상신 등 허용 결재선): 조직 관리자만 등록. 마지막 결재자는 항상 포함되어야 한다.
+// - 서명: 결재자가 자기 서명 이미지(PNG)를 올리면 결재 승인 때 그 칸에 기록된다. 이미지는 같은 조직 사용자만 볼 수 있다.
 // - 대결: 조직 관리자는 모든 결재자, 결재자 본인은 자기 단계에 대해서만 부재 기간과 대결자를 지정한다.
 const { sql, run, audit } = require("../_lib/db");
 const { send, clientIp, getBody, guard, HttpError } = require("../_lib/http");
@@ -29,7 +30,83 @@ const delegationView = r => ({
   to: new Date(r.to_date).toISOString().slice(0, 10), note: r.note || "", createdByName: r.created_name || "",
 });
 
+// ── 서명 이미지: 화면에서 PNG로 줄여 보내며, 서버는 형식·크기를 다시 검사한다.
+const SIG_MAX_BYTES = 150 * 1024;
+const SIG_MAX_W = 800, SIG_MAX_H = 400, SIG_MIN = 20;
+const PNG_MAGIC = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+function parsePng(dataUrl) {
+  const m = /^data:image\/png;base64,([A-Za-z0-9+/=]+)$/.exec(typeof dataUrl === "string" ? dataUrl : "");
+  if (!m) throw new HttpError(400, "PNG 이미지가 아닙니다. 다른 파일로 시도해 주세요.");
+  const buf = Buffer.from(m[1], "base64");
+  if (buf.length > SIG_MAX_BYTES) throw new HttpError(400, "서명 이미지가 너무 큽니다. (150KB 이하)");
+  if (buf.length < 33 || !buf.subarray(0, 8).equals(PNG_MAGIC) || buf.toString("latin1", 12, 16) !== "IHDR") throw new HttpError(400, "PNG 이미지가 아닙니다. 다른 파일로 시도해 주세요.");
+  const width = buf.readUInt32BE(16), height = buf.readUInt32BE(20);
+  if (width < SIG_MIN || height < SIG_MIN || width > SIG_MAX_W || height > SIG_MAX_H) throw new HttpError(400, `서명 이미지 크기가 올바르지 않습니다. (${SIG_MIN}~${SIG_MAX_W} x ${SIG_MIN}~${SIG_MAX_H}px)`);
+  return { buf, width, height };
+}
+// 결재 기록에 쓰이지 않은 이전 서명은 지운다(개인정보 최소 보관).
+async function dropUnusedSignature(orgId, userId, keepId) {
+  await run(
+    `DELETE s FROM dbo.user_signatures s WHERE s.org_id = @org AND s.user_id = @u AND (@keep IS NULL OR s.id <> @keep)
+       AND NOT EXISTS (SELECT 1 FROM dbo.voucher_approvals a WHERE a.signature_id = s.id)
+       AND NOT EXISTS (SELECT 1 FROM dbo.users x WHERE x.signature_id = s.id)`,
+    { org: [sql.Int, orgId], u: [sql.Int, userId], keep: [sql.Int, keepId] });
+}
+
 const handlers = {
+  // 내 현재 서명(결재자)
+  async my_signature(req, res) {
+    if (!guard(req, res, ["GET"])) return;
+    const me = await requireUser(req, ["approver"]);
+    const r = await run("SELECT s.id, s.width, s.height, s.created_at FROM dbo.users u JOIN dbo.user_signatures s ON s.id = u.signature_id WHERE u.id = @me AND u.org_id = @org", { me: [sql.Int, me.id], org: [sql.Int, me.orgId] });
+    const x = r.recordset[0];
+    send(res, 200, { signature: x ? { id: x.id, width: x.width, height: x.height, updatedAt: x.created_at } : null });
+  },
+
+  // 서명 등록/교체: 결재자 본인만. 이후 승인하는 결재부터 새 서명이 기록된다(이미 승인된 칸은 그대로).
+  async signature_save(req, res) {
+    if (!guard(req, res, ["POST"])) return;
+    const me = await requireUser(req, ["approver"]);
+    const { buf, width, height } = parsePng(getBody(req).image);
+    const ins = await run("INSERT INTO dbo.user_signatures (org_id, user_id, mime, data, width, height) OUTPUT inserted.id VALUES (@org, @u, 'image/png', @d, @w, @h)",
+      { org: [sql.Int, me.orgId], u: [sql.Int, me.id], d: [sql.VarBinary(sql.MAX), buf], w: [sql.Int, width], h: [sql.Int, height] });
+    const id = ins.recordset[0].id;
+    await run("UPDATE dbo.users SET signature_id = @id WHERE id = @u AND org_id = @org", { id: [sql.Int, id], u: [sql.Int, me.id], org: [sql.Int, me.orgId] });
+    await dropUnusedSignature(me.orgId, me.id, id);
+    await audit({ orgId: me.orgId, userId: me.id, loginId: me.loginId, action: "signature_save", target: String(id), ip: clientIp(req) });
+    send(res, 200, { signature: { id, width, height } });
+  },
+
+  async signature_delete(req, res) {
+    if (!guard(req, res, ["POST"])) return;
+    const me = await requireUser(req, ["approver"]);
+    await run("UPDATE dbo.users SET signature_id = NULL WHERE id = @u AND org_id = @org", { u: [sql.Int, me.id], org: [sql.Int, me.orgId] });
+    await dropUnusedSignature(me.orgId, me.id, null);
+    await audit({ orgId: me.orgId, userId: me.id, loginId: me.loginId, action: "signature_delete", ip: clientIp(req) });
+    send(res, 200, { ok: true });
+  },
+
+  // 서명 이미지 내려받기(<img src>용): 같은 조직 사용자 중, 본인 서명이거나 결재 기록에 쓰인 서명만.
+  async signature(req, res) {
+    if (!guard(req, res, ["GET"])) return;
+    const me = await requireUser(req, ["admin", "accountant", "approver", "viewer"]);
+    const id = Number(req.query && req.query.id);
+    if (!Number.isInteger(id) || id <= 0) throw new HttpError(400, "서명이 올바르지 않습니다.");
+    const r = await run(
+      `SELECT s.mime, s.data FROM dbo.user_signatures s
+       WHERE s.id = @id AND s.org_id = @org
+         AND (s.user_id = @me OR EXISTS (SELECT 1 FROM dbo.voucher_approvals a WHERE a.signature_id = s.id AND a.org_id = @org))`,
+      { id: [sql.Int, id], org: [sql.Int, me.orgId], me: [sql.Int, me.id] });
+    const x = r.recordset[0];
+    if (!x) throw new HttpError(404, "서명을 찾을 수 없습니다.");
+    res.statusCode = 200;
+    res.setHeader("Content-Type", "image/png");
+    res.setHeader("Content-Length", String(x.data.length));
+    res.setHeader("Cache-Control", "private, max-age=31536000, immutable");
+    res.setHeader("X-Content-Type-Options", "nosniff");
+    res.end(x.data);
+  },
+
   // 결재선 목록(관리자): 정식 결재선은 항상 있고, 여기에는 등록한 것만 나온다.
   async lines(req, res) {
     if (!guard(req, res, ["GET"])) return;

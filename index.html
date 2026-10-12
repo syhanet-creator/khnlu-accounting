@@ -624,8 +624,14 @@ select.kinput {
   height: 34px; box-sizing: border-box; display: flex; align-items: center; justify-content: center; white-space: nowrap; overflow: hidden;
 }
 .approval-role.long-label { font-size: 9.5px; letter-spacing: -0.3px; }
-.approval-sign { height: 42px; display: flex; align-items: center; justify-content: center; font-size: 12.5px; color: var(--ok); font-weight: 700; }
+.approval-sign { height: 58px; display: flex; align-items: center; justify-content: center; font-size: 12.5px; color: var(--ok); font-weight: 700; }
 .approval-sign.acting { flex-direction: column; gap: 1px; line-height: 1.15; font-size: 11px; }
+.approval-sign.signed { flex-direction: column; gap: 1px; line-height: 1.1; padding: 3px 2px; height: 58px; }
+.approval-sign.signed .sign-img { max-height: 40px; max-width: 72px; width: auto; object-fit: contain; display: block; }
+.approval-sign.signed .sign-name { font-size: 10px; color: var(--text-soft); font-weight: 500; }
+.approval-sign.signed .sign-name.acting { color: var(--warn); font-weight: 700; }
+.sig-stage { display: flex; align-items: center; justify-content: center; min-height: 110px; padding: 10px; border: 1px solid var(--border); border-radius: 12px; background: repeating-conic-gradient(var(--surface-2) 0% 25%, var(--surface) 0% 50%) 50% / 16px 16px; }
+.sig-stage img { max-width: 100%; max-height: 120px; display: block; }
 .acting-label { font-size: 10px; color: var(--warn); font-weight: 700; }
 .approval-box.skipped .approval-role { text-decoration: line-through; color: var(--text-faint); }
 .approval-box.skipped .approval-sign { position: relative; align-items: flex-start; padding-top: 5px; color: var(--text-faint); font-size: 10.5px; font-weight: 500; background: var(--surface-2); }
@@ -991,6 +997,8 @@ function fyOfDate(dateStr) {
   const y = Number(String(dateStr).slice(0, 4)), m = Number(String(dateStr).slice(5, 7));
   return m >= 4 ? y : y - 1;
 }
+// 결재 서명 이미지 주소(같은 사이트, 로그인 쿠키로 보호). id가 같으면 내용도 같으므로 브라우저가 오래 캐시한다.
+const signatureUrl = id => "/api/approval/signature?id=" + encodeURIComponent(id);
 // 전표의 결재 단계(순서): 상신된 전표는 지정된 결재선(생략 단계 제외), 그 외에는 조직 전체. 마지막 결재자가 빠진 값은 무시한다.
 function voucherSteps(v, data) {
   const org = data.approvalSteps || [];
@@ -2080,8 +2088,12 @@ function VoucherForm({ data, voucher, readOnly, onChange, onSave, onCancel, acco
           const ap = v.approvals && v.approvals[step];
           return React.createElement("div", { key: step, className: "approval-box" + (skipped ? " skipped" : "") },
             React.createElement("div", { className: "approval-role" + (step.length >= 5 ? " long-label" : "") }, step),
-            React.createElement("div", { className: "approval-sign" + (ap && ap.actingFor ? " acting" : ""), title: ap && ap.actingFor ? `대결: ${ap.by} (원 결재자 ${ap.actingFor})` : undefined },
+            React.createElement("div", { className: "approval-sign" + (ap && ap.actingFor ? " acting" : "") + (!skipped && ap && ap.approved && ap.signatureId ? " signed" : ""), title: ap && ap.actingFor ? `대결: ${ap.by} (원 결재자 ${ap.actingFor})` : undefined },
               skipped ? "생략"
+                : ap && ap.approved && ap.signatureId ? [
+                    React.createElement("img", { key: "i", className: "sign-img", src: signatureUrl(ap.signatureId), alt: `${ap.by} 서명`, draggable: false }),
+                    React.createElement("span", { key: "n", className: "sign-name" + (ap.actingFor ? " acting" : "") }, (ap.actingFor ? "대결 " : "") + ap.by)
+                  ]
                 : ap && ap.approved ? (ap.actingFor ? [React.createElement("span", { key: "l", className: "acting-label" }, "대결"), React.createElement("span", { key: "n" }, ap.by)] : "인")
                 : "")
           );
@@ -2231,14 +2243,21 @@ function buildVoucherPrintNode(v, data) {
   const lineSteps = voucherSteps(v, data);
   steps.forEach(step => {
     const skipped = !lineSteps.includes(step);
-    head.appendChild(el("th", B + "padding:3px 8px;min-width:78px;font-size:12px;background:#f1efe7;" + (skipped ? "text-decoration:line-through;color:#999;" : ""), step));
+    head.appendChild(el("th", B + "padding:3px 8px;min-width:90px;font-size:12px;background:#f1efe7;" + (skipped ? "text-decoration:line-through;color:#999;" : ""), step));
     const ap = v.approvals && v.approvals[step];
-    const cell = el("td", B + "height:58px;text-align:center;vertical-align:middle;font-size:11px;" + (skipped ? "background:#f1efe7;" : ""));
+    const cell = el("td", B + "height:66px;text-align:center;vertical-align:middle;font-size:11px;" + (skipped ? "background:#f1efe7;" : ""));
     if (skipped) {
       cell.appendChild(el("div", "font-size:10px;color:#777;", "생략"));
       cell.appendChild(el("div", "height:2px;background:#333;margin:10px 8px 0;"));
     } else if (ap && ap.approved) {
-      cell.appendChild(el("div", "font-size:15px;font-weight:700;color:" + (ap.actingFor ? "#b45309" : "#b3261e") + ";", ap.actingFor ? "대결" : "승인"));
+      if (ap.signatureId) {
+        const im = el("img", "max-height:40px;max-width:80px;display:block;margin:0 auto;");
+        im.setAttribute("src", signatureUrl(ap.signatureId)); im.setAttribute("alt", "서명");
+        cell.appendChild(im);
+        if (ap.actingFor) cell.appendChild(el("div", "font-size:10px;color:#b45309;font-weight:700;", "대결"));
+      } else {
+        cell.appendChild(el("div", "font-size:15px;font-weight:700;color:" + (ap.actingFor ? "#b45309" : "#b3261e") + ";", ap.actingFor ? "대결" : "승인"));
+      }
       cell.appendChild(el("div", "", ap.by || ""));
       if (ap.actingFor) cell.appendChild(el("div", "color:#555;font-size:10px;", `(${ap.actingFor})`));
       cell.appendChild(el("div", "color:#555;", ap.at ? String(ap.at).slice(0, 10) : ""));
@@ -2332,6 +2351,7 @@ async function buildPrintPackage(voucher, data, onProgress) {
   document.body.appendChild(node);
   let canvas;
   try {
+    await Promise.all([...node.querySelectorAll("img")].map(im => im.complete ? null : new Promise(r => { im.onload = im.onerror = r; })));
     canvas = await window.html2canvas(node, { scale: 2, backgroundColor: "#ffffff", windowWidth: 794, logging: false, onclone: (doc, el) => { el.style.position = "static"; el.style.left = "0"; } });
   } finally { node.remove(); }
   const sliceH = Math.floor(canvas.width * A4_H / A4_W);
@@ -3541,8 +3561,106 @@ function ApprovalSettingsScreen({ me, onChanged }) {
   );
 }
 
+// 서명 이미지 만들기: 사진/스캔 파일을 작게 줄이고, 흰 배경을 투명하게 바꾸고, 여백을 잘라 PNG로 만든다.
+async function makeSignaturePng(file, removeBg) {
+  let bmp;
+  try { bmp = await createImageBitmap(file); } catch (e) { throw new Error("이 파일은 열 수 없습니다. PNG 또는 JPG 이미지를 사용해 주세요."); }
+  const MAXW = 480, MAXH = 200;
+  const sc = Math.min(1, MAXW / bmp.width, MAXH / bmp.height);
+  const w = Math.max(1, Math.round(bmp.width * sc)), h = Math.max(1, Math.round(bmp.height * sc));
+  const c = document.createElement("canvas"); c.width = w; c.height = h;
+  const ctx = c.getContext("2d", { willReadFrequently: true });
+  ctx.fillStyle = "#fff"; ctx.fillRect(0, 0, w, h);   // 투명 PNG를 올려도 흰 바탕 기준으로 처리
+  ctx.drawImage(bmp, 0, 0, w, h);
+  if (bmp.close) bmp.close();
+  const img = ctx.getImageData(0, 0, w, h), d = img.data;
+  let x0 = w, y0 = h, x1 = -1, y1 = -1;
+  for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
+    const i = (y * w + x) * 4;
+    const lum = 0.299 * d[i] + 0.587 * d[i + 1] + 0.114 * d[i + 2];
+    if (removeBg) d[i + 3] = lum >= 235 ? 0 : lum <= 150 ? 255 : Math.round((235 - lum) * 255 / 85);
+    if (lum < 240 && d[i + 3] > 10) { if (x < x0) x0 = x; if (x > x1) x1 = x; if (y < y0) y0 = y; if (y > y1) y1 = y; }
+  }
+  if (x1 < 0) throw new Error("서명이 보이지 않습니다. 흰 종이에 진하게 쓴 서명 사진을 사용해 주세요.");
+  ctx.putImageData(img, 0, 0);
+  const pad = 6;
+  x0 = Math.max(0, x0 - pad); y0 = Math.max(0, y0 - pad); x1 = Math.min(w - 1, x1 + pad); y1 = Math.min(h - 1, y1 + pad);
+  const cw = Math.max(24, x1 - x0 + 1), ch = Math.max(24, y1 - y0 + 1);
+  let out = document.createElement("canvas"); out.width = cw; out.height = ch;
+  const octx = out.getContext("2d");
+  if (!removeBg) { octx.fillStyle = "#fff"; octx.fillRect(0, 0, cw, ch); }
+  octx.drawImage(c, x0, y0, x1 - x0 + 1, y1 - y0 + 1, 0, 0, x1 - x0 + 1, y1 - y0 + 1);
+  let url = out.toDataURL("image/png");
+  for (let k = 0; k < 4 && url.length > 190000; k++) {   // 150KB 제한: 넘으면 더 줄인다
+    const t = document.createElement("canvas"); t.width = Math.max(24, Math.round(out.width * 0.75)); t.height = Math.max(24, Math.round(out.height * 0.75));
+    t.getContext("2d").drawImage(out, 0, 0, t.width, t.height);
+    out = t; url = out.toDataURL("image/png");
+  }
+  if (url.length > 190000) throw new Error("이미지가 너무 복잡합니다. 더 단순한 서명 사진을 사용해 주세요.");
+  return { dataUrl: url, width: out.width, height: out.height };
+}
+
+// 내 서명 등록/교체/삭제 (결재자 계정 메뉴)
+function SignatureForm({ onClose }) {
+  const [cur, setCur] = useState(undefined);      // undefined: 불러오는 중, null: 없음
+  const [file, setFile] = useState(null);
+  const [removeBg, setRemoveBg] = useState(true);
+  const [preview, setPreview] = useState(null);   // { dataUrl, width, height }
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  const inputRef = useRef(null);
+  useEffect(() => {
+    let live = true;
+    apiRetrying("approval/my_signature").then(r => { if (live) setCur(r.signature); }).catch(e => { if (live) { setCur(null); setError(e.message); } });
+    return () => { live = false; };
+  }, []);
+  useEffect(() => {
+    if (!file) { setPreview(null); return; }
+    let live = true;
+    setError("");
+    makeSignaturePng(file, removeBg).then(r => { if (live) setPreview(r); }).catch(e => { if (live) { setPreview(null); setError(e.message); } });
+    return () => { live = false; };
+  }, [file, removeBg]);
+  async function save() {
+    if (!preview || busy) return;
+    setBusy(true); setError("");
+    try {
+      const r = await apiRetrying("approval/signature_save", { method: "POST", body: { image: preview.dataUrl } });
+      setCur(r.signature); setFile(null); setPreview(null);
+    } catch (e) { setError(e.message); } finally { setBusy(false); }
+  }
+  async function remove() {
+    if (busy || !confirm("등록된 서명을 삭제할까요? 이미 승인된 결재 칸의 서명은 그대로 남습니다.")) return;
+    setBusy(true); setError("");
+    try { await apiRetrying("approval/signature_delete", { method: "POST", body: {} }); setCur(null); }
+    catch (e) { setError(e.message); } finally { setBusy(false); }
+  }
+  return React.createElement("div", null,
+    React.createElement("p", { className: "note-text", style: { marginTop: 0 } }, "서명 사진 파일을 올리면, 이후 승인하는 결재 칸에 이 서명이 들어갑니다. 이미 승인된 칸은 바뀌지 않으며, 서명은 같은 조직 사용자에게만 보입니다."),
+    React.createElement(Field, { label: preview ? "새 서명 (미리보기)" : "현재 서명" },
+      React.createElement("div", { className: "sig-stage" },
+        preview ? React.createElement("img", { src: preview.dataUrl, alt: "새 서명 미리보기" })
+          : cur ? React.createElement("img", { src: signatureUrl(cur.id), alt: "현재 서명" })
+          : React.createElement("span", { className: "note-text" }, cur === undefined ? "불러오는 중..." : "등록된 서명이 없습니다."))
+    ),
+    React.createElement("div", { style: { display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center", margin: "10px 0" } },
+      React.createElement("input", { ref: inputRef, type: "file", accept: "image/png,image/jpeg,image/webp", style: { display: "none" },
+        onChange: e => { const f = e.target.files && e.target.files[0]; e.target.value = ""; if (!f) return; if (f.size > 8 * 1024 * 1024) { setError("파일이 너무 큽니다. (8MB 이하)"); return; } setFile(f); } }),
+      React.createElement(Btn, { variant: "outline", onClick: () => inputRef.current && inputRef.current.click(), disabled: busy }, cur || file ? "다른 파일 선택" : "서명 파일 선택"),
+      React.createElement("label", { style: { display: "flex", gap: 6, alignItems: "center", fontSize: 13 } },
+        React.createElement("input", { type: "checkbox", checked: removeBg, onChange: e => setRemoveBg(e.target.checked) }), "흰 배경 지우기")
+    ),
+    error && React.createElement("p", { style: { color: "var(--danger)", fontSize: 13, margin: "4px 0 8px" } }, error),
+    React.createElement("div", { style: { display: "flex", gap: 8, justifyContent: "space-between", marginTop: 14 } },
+      React.createElement("div", null, cur && !file && React.createElement(Btn, { variant: "outline", onClick: remove, disabled: busy }, "서명 삭제")),
+      React.createElement("div", { style: { display: "flex", gap: 8 } },
+        React.createElement(Btn, { onClick: onClose }, "닫기"),
+        React.createElement(Btn, { variant: "primary", onClick: save, disabled: !preview || busy }, busy ? "저장 중..." : "서명 저장")))
+  );
+}
+
 // 계정 메뉴(아바타): 비밀번호 변경 · 화면 모드 · 로그아웃. placement "sidebar"(PC 사이드바 아래) | "topbar"(모바일·시스템관리자 위쪽)
-function AccountMenu({ user, placement, onPassword, onLogout }) {
+function AccountMenu({ user, placement, onPassword, onSignature, onLogout }) {
   const [open, setOpen] = useState(false);
   const mode = useThemeMode();
   const ref = useRef(null);
@@ -3560,8 +3678,9 @@ function AccountMenu({ user, placement, onPassword, onLogout }) {
     checked ? React.createElement("span", { className: "check" }, React.createElement(Icon, { name: "check2", size: 15 })) : null);
   const menu = open && React.createElement("div", { className: "acct-menu", role: "menu" },
     React.createElement("div", { className: "menu-label" }, `${user.displayName} (${user.loginId})`),
+    onSignature && item("edit", "내 서명", onSignature),
     onPassword && item("key", "비밀번호 변경", onPassword),
-    onPassword && React.createElement("div", { className: "menu-sep" }),
+    (onPassword || onSignature) && React.createElement("div", { className: "menu-sep" }),
     React.createElement("div", { className: "menu-label" }, "화면 모드"),
     item("sun", "라이트", () => setThemeMode("light"), mode === "light"),
     item("moon", "다크", () => setThemeMode("dark"), mode === "dark"),
@@ -4126,6 +4245,7 @@ const upsertVoucher = (prev, v) => ({ ...prev, vouchers: prev.vouchers.some(x =>
 
 function MainApp({ authUser, onLogout, initialData }) {
   const [pwOpen, setPwOpen] = useState(false);
+  const [sigOpen, setSigOpen] = useState(false);
   const [data, setData] = useState(initialData);
   const [nav, setNav] = useState("dashboard");
   const [editingVoucher, setEditingVoucher] = useState(null);
@@ -4420,7 +4540,7 @@ function MainApp({ authUser, onLogout, initialData }) {
         }, React.createElement(Icon, { name: item.icon, size: 17 }), item.label))
       ),
       React.createElement("div", { className: "sidebar-footer" },
-        React.createElement(AccountMenu, { user: authUser, placement: "sidebar", onPassword: () => setPwOpen(true), onLogout })
+        React.createElement(AccountMenu, { user: authUser, placement: "sidebar", onPassword: () => setPwOpen(true), onSignature: authUser.role === "approver" ? () => setSigOpen(true) : undefined, onLogout })
       )
     ),
     React.createElement("div", { className: "main-area" },
@@ -4438,7 +4558,7 @@ function MainApp({ authUser, onLogout, initialData }) {
               : React.createElement(Badge, { tone: "ok" }, "서버에 저장됨")
         ),
         isMobile && React.createElement("div", { className: "user-chip" },
-          React.createElement(AccountMenu, { user: authUser, placement: "topbar", onPassword: () => setPwOpen(true), onLogout })
+          React.createElement(AccountMenu, { user: authUser, placement: "topbar", onPassword: () => setPwOpen(true), onSignature: authUser.role === "approver" ? () => setSigOpen(true) : undefined, onLogout })
         ),
         nav === "voucher" && editingVoucher && React.createElement(Btn, { variant: "ghost", size: "sm", onClick: () => setEditingVoucher(null) }, "목록으로")
       ),
@@ -4494,6 +4614,9 @@ function MainApp({ authUser, onLogout, initialData }) {
       fy: data.currentFY
     }),
 
+    React.createElement(Modal, { open: sigOpen, onClose: () => setSigOpen(false), title: "내 서명" },
+      sigOpen && React.createElement(SignatureForm, { onClose: () => setSigOpen(false) })
+    ),
     React.createElement(Modal, { open: pwOpen, onClose: () => setPwOpen(false), title: "비밀번호 변경" },
       pwOpen && React.createElement(PasswordForm, {
         onDone: () => { setPwOpen(false); alert("비밀번호가 변경되었습니다. 다른 기기의 로그인은 모두 종료됩니다."); },
