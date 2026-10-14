@@ -43,7 +43,7 @@ const handlers = {
     const me = await getSessionUser(req); // 로그인했으면 기록에 남기고, 아니어도 허용
     const ip = clientIp(req);
     if (ip) {
-      const c = await run("SELECT COUNT(*) AS n FROM dbo.audit_log WHERE action = 'installer_download' AND ip = @ip AND at > DATEADD(hour, -1, SYSUTCDATETIME())", { ip: [sql.VarChar(45), ip] });
+      const c = await run(`SELECT COUNT(*) AS n FROM dbo.audit_log WHERE action = 'installer_download' AND ip = @ip AND "at" > now() - interval '1 hour'`, { ip: [sql.VarChar(45), ip] });
       if (c.recordset[0].n >= 10) throw new HttpError(429, "내려받기 요청이 너무 많습니다. 잠시 후 다시 시도해 주세요.");
     }
     const info = await installerInfo();
@@ -101,7 +101,7 @@ const handlers = {
     const { blob: blobPath } = getBody(req);
     if (!blob.isOrgBlob(me.orgId, blobPath)) throw new HttpError(403, "삭제할 수 없는 파일입니다.");
     const used = await run(
-      "SELECT TOP 1 id FROM dbo.vouchers WHERE org_id = @org AND status IN ('pending','approved') AND CHARINDEX(@b, body) > 0",
+      "SELECT id FROM dbo.vouchers WHERE org_id = @org AND status IN ('pending','approved') AND position(@b in body) > 0 LIMIT 1",
       { org: [sql.Int, me.orgId], b: [sql.NVarChar(200), blobPath] }
     );
     if (used.recordset.length) throw new HttpError(409, "결재 중이거나 승인된 전표의 증빙은 삭제할 수 없습니다.");

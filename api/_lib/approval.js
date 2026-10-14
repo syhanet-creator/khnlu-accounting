@@ -38,7 +38,7 @@ async function resolveLine(q, orgId, orgSteps, lineId) {
   if (lineId === undefined || lineId === null || lineId === "" || lineId === "default") return { id: "default", name: DEFAULT_LINE_NAME, steps: orgSteps.slice() };
   const n = Number(lineId);
   if (!Number.isInteger(n)) throw new HttpError(400, "결재선이 올바르지 않습니다.");
-  const r = await q("SELECT id, name, steps FROM dbo.approval_lines WHERE id = @id AND org_id = @org AND is_active = 1", { id: [sql.Int, n], org: [sql.Int, orgId] });
+  const r = await q("SELECT id, name, steps FROM dbo.approval_lines WHERE id = @id AND org_id = @org AND is_active", { id: [sql.Int, n], org: [sql.Int, orgId] });
   const row = r.recordset[0];
   if (!row) throw new HttpError(400, "선택한 결재선을 사용할 수 없습니다. 새로고침 후 다시 선택해 주세요.");
   let steps = [];
@@ -51,9 +51,10 @@ async function resolveLine(q, orgId, orgSteps, lineId) {
 // 오늘 이 사용자가 이 단계를 대결할 수 있으면 부재자(원 결재자) 사용자 id, 아니면 null
 async function activeDelegation(q, orgId, step, userId) {
   const r = await q(
-    `SELECT TOP 1 absent_user_id FROM dbo.approval_delegations
-     WHERE org_id = @org AND step_name = @s AND delegate_user_id = @u AND is_active = 1
-       AND CAST(SYSDATETIMEOFFSET() AT TIME ZONE 'Korea Standard Time' AS DATE) BETWEEN from_date AND to_date`,
+    `SELECT absent_user_id FROM dbo.approval_delegations
+     WHERE org_id = @org AND step_name = @s AND delegate_user_id = @u AND is_active
+       AND (now() AT TIME ZONE 'Asia/Seoul')::date BETWEEN from_date AND to_date
+     LIMIT 1`,
     { org: [sql.Int, orgId], s: [sql.NVarChar(50), step], u: [sql.Int, userId] }
   );
   return r.recordset[0] ? r.recordset[0].absent_user_id : null;

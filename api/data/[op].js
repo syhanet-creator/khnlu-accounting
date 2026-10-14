@@ -120,11 +120,9 @@ async function closedYears(q, orgId) {
 async function nextDocNo(q, orgId, date) {
   const ym = ymOf(date);
   const r = await q(
-    `MERGE dbo.doc_counters WITH (HOLDLOCK) AS t
-     USING (SELECT @org AS org_id, @ym AS ym) AS s ON t.org_id = s.org_id AND t.ym = s.ym
-     WHEN MATCHED THEN UPDATE SET last_no = t.last_no + 1
-     WHEN NOT MATCHED THEN INSERT (org_id, ym, last_no) VALUES (s.org_id, s.ym, 1)
-     OUTPUT inserted.last_no AS n;`,
+    `INSERT INTO dbo.doc_counters (org_id, ym, last_no) VALUES (@org, @ym, 1)
+     ON CONFLICT (org_id, ym) DO UPDATE SET last_no = dbo.doc_counters.last_no + 1
+     RETURNING last_no AS n`,
     { org: [sql.Int, orgId], ym: [sql.Char(6), ym] }
   );
   return `총무국-${ym}-${String(r.recordset[0].n).padStart(3, "0")}`;
@@ -151,12 +149,12 @@ async function assemble(me) {
      JOIN dbo.users u ON u.id = a.approved_by LEFT JOIN dbo.users ua ON ua.id = a.acting_for_user_id WHERE a.org_id = @org`,
     { org: [sql.Int, me.orgId] }
   );
-  const lr = await run("SELECT id, name, steps FROM dbo.approval_lines WHERE org_id = @org AND is_active = 1 ORDER BY id", { org: [sql.Int, me.orgId] });
+  const lr = await run("SELECT id, name, steps FROM dbo.approval_lines WHERE org_id = @org AND is_active ORDER BY id", { org: [sql.Int, me.orgId] });
   const dr = await run(
     `SELECT d.id, d.step_name, d.from_date, d.to_date, u.display_name AS absent_name FROM dbo.approval_delegations d
      JOIN dbo.users u ON u.id = d.absent_user_id
-     WHERE d.org_id = @org AND d.delegate_user_id = @me AND d.is_active = 1
-       AND CAST(SYSDATETIMEOFFSET() AT TIME ZONE 'Korea Standard Time' AS DATE) BETWEEN d.from_date AND d.to_date`,
+     WHERE d.org_id = @org AND d.delegate_user_id = @me AND d.is_active
+       AND (now() AT TIME ZONE 'Asia/Seoul')::date BETWEEN d.from_date AND d.to_date`,
     { org: [sql.Int, me.orgId], me: [sql.Int, me.id] }
   );
   const rr = await run("SELECT kind, id, body, version FROM dbo.records WHERE org_id = @org", { org: [sql.Int, me.orgId] });
@@ -228,7 +226,7 @@ function cleanRevision(r) {
 
 async function upsertRecord(q, orgId, kind, id, body, by) {
   const params = { org: [sql.Int, orgId], kind: [sql.VarChar(20), kind], id: [sql.VarChar(40), String(id)], body: [sql.NVarChar(sql.MAX), JSON.stringify(body)], by: [sql.Int, by] };
-  const u = await q("UPDATE dbo.records SET body = @body, version = version + 1, updated_by = @by, updated_at = SYSUTCDATETIME() WHERE org_id = @org AND kind = @kind AND id = @id", params);
+  const u = await q("UPDATE dbo.records SET body = @body, version = version + 1, updated_by = @by, updated_at = now() WHERE org_id = @org AND kind = @kind AND id = @id", params);
   if (!u.rowsAffected[0]) await q("INSERT INTO dbo.records (org_id, kind, id, body, updated_by) VALUES (@org, @kind, @id, @body, @by)", params);
 }
 
@@ -261,14 +259,14 @@ const handlers = {
         v.approvalLine = { id: chosenLine.id, name: chosenLine.name, steps: chosenLine.steps, ...(note ? { note } : {}), by: me.displayName, at: new Date().toISOString() };
       }
       if ((await closedYears(q, me.orgId)).has(fyOf(v.date))) throw new HttpError(409, `${fyOf(v.date)}회계연도는 마감되어 전표를 작성·수정할 수 없습니다.`);
-      const ex = (await q("SELECT status, version, created_by FROM dbo.vouchers WITH (UPDLOCK, ROWLOCK) WHERE org_id = @org AND id = @id", { org: [sql.Int, me.orgId], id: [sql.VarChar(40), v.id] })).recordset[0];
+      const ex = (await q("SELECT status, version, created_by FROM dbo.vouchers WHERE org_id = @org AND id = @id FOR UPDATE", { org: [sql.Int, me.orgId], id: [sql.VarChar(40), v.id] })).recordset[0];
       if (ex) {
         if (!["draft", "rejected"].includes(ex.status)) throw new HttpError(409, "결재 중이거나 승인된 전표는 수정할 수 없습니다. (결재 중이면 [회수] 후 수정)");
         if (me.role !== "admin" && ex.created_by !== me.id) throw new HttpError(403, "본인이 작성한 전표만 수정할 수 있습니다.");
         if (body.voucher.version !== undefined && Number(body.voucher.version) !== ex.version) throw new HttpError(409, "다른 사용자가 먼저 수정했습니다. 새로고침 후 다시 시도해 주세요.");
         const u = await q(
           `UPDATE dbo.vouchers SET voucher_date = CAST(@d AS DATE), title = @title, voucher_type = @type, status = @status, body = @body,
-             version = version + 1, updated_by = @by, updated_at = SYSUTCDATETIME() WHERE org_id = @org AND id = @id AND version = @ver`,
+             version = version + 1, updated_by = @by, updated_at = now() WHERE org_id = @org AND id = @id AND version = @ver`,
           { ...voucherParams(me.orgId, v, "", status, me.id), ver: [sql.Int, ex.version] }
         );
         if (!u.rowsAffected[0]) throw new HttpError(409, "다른 사용자가 먼저 수정했습니다. 새로고침 후 다시 시도해 주세요.");
@@ -288,7 +286,7 @@ const handlers = {
     const { id } = getBody(req);
     if (!ID_RE.test(id || "")) throw new HttpError(400, "전표 ID가 올바르지 않습니다.");
     await tx(async q => {
-      const ex = (await q("SELECT status, created_by, body FROM dbo.vouchers WITH (UPDLOCK, ROWLOCK) WHERE org_id = @org AND id = @id", { org: [sql.Int, me.orgId], id: [sql.VarChar(40), id] })).recordset[0];
+      const ex = (await q("SELECT status, created_by, body FROM dbo.vouchers WHERE org_id = @org AND id = @id FOR UPDATE", { org: [sql.Int, me.orgId], id: [sql.VarChar(40), id] })).recordset[0];
       if (!ex) throw new HttpError(404, "전표를 찾을 수 없습니다.");
       if (!["draft", "rejected"].includes(ex.status)) throw new HttpError(409, "승인되었거나 결재 중인 전표는 삭제할 수 없습니다.");
       if (parseJson(ex.body, {}).isAutoGenerated) throw new HttpError(409, "자동 생성된 전표는 삭제할 수 없습니다. (비품 삭제 시 함께 정리됩니다)");
@@ -306,12 +304,12 @@ const handlers = {
     const { id } = getBody(req);
     if (!ID_RE.test(id || "")) throw new HttpError(400, "전표 ID가 올바르지 않습니다.");
     await tx(async q => {
-      const ex = (await q("SELECT status, created_by FROM dbo.vouchers WITH (UPDLOCK, ROWLOCK) WHERE org_id = @org AND id = @id", { org: [sql.Int, me.orgId], id: [sql.VarChar(40), id] })).recordset[0];
+      const ex = (await q("SELECT status, created_by FROM dbo.vouchers WHERE org_id = @org AND id = @id FOR UPDATE", { org: [sql.Int, me.orgId], id: [sql.VarChar(40), id] })).recordset[0];
       if (!ex) throw new HttpError(404, "전표를 찾을 수 없습니다.");
       if (ex.status !== "pending") throw new HttpError(409, "결재 중인 전표만 회수할 수 있습니다.");
       if (me.role !== "admin" && ex.created_by !== me.id) throw new HttpError(403, "본인이 작성한 전표만 회수할 수 있습니다.");
       await q("DELETE FROM dbo.voucher_approvals WHERE org_id = @org AND voucher_id = @id", { org: [sql.Int, me.orgId], id: [sql.VarChar(40), id] });
-      await q("UPDATE dbo.vouchers SET status = 'draft', version = version + 1, updated_by = @by, updated_at = SYSUTCDATETIME() WHERE org_id = @org AND id = @id", { org: [sql.Int, me.orgId], id: [sql.VarChar(40), id], by: [sql.Int, me.id] });
+      await q("UPDATE dbo.vouchers SET status = 'draft', version = version + 1, updated_by = @by, updated_at = now() WHERE org_id = @org AND id = @id", { org: [sql.Int, me.orgId], id: [sql.VarChar(40), id], by: [sql.Int, me.id] });
     });
     await audit({ orgId: me.orgId, userId: me.id, loginId: me.loginId, action: "voucher_recall", target: id, ip: clientIp(req) });
     send(res, 200, { voucher: await loadVoucherView(me.orgId, id) });
@@ -325,7 +323,7 @@ const handlers = {
     if (!ID_RE.test(id || "")) throw new HttpError(400, "전표 ID가 올바르지 않습니다.");
     let finalStatus, actedStep, actingForId = null;
     await tx(async q => {
-      const ex = (await q("SELECT status, version, created_by, body FROM dbo.vouchers WITH (UPDLOCK, ROWLOCK) WHERE org_id = @org AND id = @id", { org: [sql.Int, me.orgId], id: [sql.VarChar(40), id] })).recordset[0];
+      const ex = (await q("SELECT status, version, created_by, body FROM dbo.vouchers WHERE org_id = @org AND id = @id FOR UPDATE", { org: [sql.Int, me.orgId], id: [sql.VarChar(40), id] })).recordset[0];
       if (!ex) throw new HttpError(404, "전표를 찾을 수 없습니다.");
       if (ex.status !== "pending") throw new HttpError(409, "결재 중인 전표가 아닙니다.");
       if (version !== undefined && Number(version) !== ex.version) throw new HttpError(409, "전표가 변경되었습니다. 새로고침 후 내용을 다시 확인해 주세요.");
@@ -346,7 +344,7 @@ const handlers = {
       const sigId = (await q("SELECT signature_id FROM dbo.users WHERE id = @me AND org_id = @org", { me: [sql.Int, me.id], org: [sql.Int, me.orgId] })).recordset[0].signature_id;
       await q("INSERT INTO dbo.voucher_approvals (org_id, voucher_id, step_name, approved_by, acting_for_user_id, signature_id) VALUES (@org, @id, @step, @by, @acting, @sig)", { org: [sql.Int, me.orgId], id: [sql.VarChar(40), id], step: [sql.NVarChar(50), next], by: [sql.Int, me.id], acting: [sql.Int, actingForId], sig: [sql.Int, sigId] });
       finalStatus = steps.filter(s => done.has(s)).length + 1 >= steps.length ? "approved" : "pending";
-      await q("UPDATE dbo.vouchers SET status = @s, version = version + 1, updated_by = @by, updated_at = SYSUTCDATETIME() WHERE org_id = @org AND id = @id", { s: [sql.VarChar(20), finalStatus], org: [sql.Int, me.orgId], id: [sql.VarChar(40), id], by: [sql.Int, me.id] });
+      await q("UPDATE dbo.vouchers SET status = @s, version = version + 1, updated_by = @by, updated_at = now() WHERE org_id = @org AND id = @id", { s: [sql.VarChar(20), finalStatus], org: [sql.Int, me.orgId], id: [sql.VarChar(40), id], by: [sql.Int, me.id] });
     });
     await audit({ orgId: me.orgId, userId: me.id, loginId: me.loginId, action: "voucher_approve", target: id, detail: `step=${actedStep}${actingForId ? ", 대결" : ""}, status=${finalStatus}`, ip: clientIp(req) });
     send(res, 200, { voucher: await loadVoucherView(me.orgId, id) });
@@ -361,7 +359,7 @@ const handlers = {
     const why = str(reason, 300).trim();
     if (!why) throw new HttpError(400, "반려 사유를 입력해 주세요.");
     await tx(async q => {
-      const ex = (await q("SELECT status, version, created_by, body FROM dbo.vouchers WITH (UPDLOCK, ROWLOCK) WHERE org_id = @org AND id = @id", { org: [sql.Int, me.orgId], id: [sql.VarChar(40), id] })).recordset[0];
+      const ex = (await q("SELECT status, version, created_by, body FROM dbo.vouchers WHERE org_id = @org AND id = @id FOR UPDATE", { org: [sql.Int, me.orgId], id: [sql.VarChar(40), id] })).recordset[0];
       if (!ex) throw new HttpError(404, "전표를 찾을 수 없습니다.");
       if (ex.status !== "pending") throw new HttpError(409, "결재 중인 전표가 아닙니다.");
       if (version !== undefined && Number(version) !== ex.version) throw new HttpError(409, "전표가 변경되었습니다. 새로고침 후 다시 확인해 주세요.");
@@ -375,7 +373,7 @@ const handlers = {
       if (!act.ok) throw new HttpError(403, `지금은 [${next}] 단계 결재 차례입니다.`);
       body.rejection = { by: me.displayName, step: next, at: new Date().toISOString(), reason: why, ...(act.actingFor ? { acting: true } : {}) };
       await q("DELETE FROM dbo.voucher_approvals WHERE org_id = @org AND voucher_id = @id", { org: [sql.Int, me.orgId], id: [sql.VarChar(40), id] });
-      await q("UPDATE dbo.vouchers SET status = 'rejected', body = @body, version = version + 1, updated_by = @by, updated_at = SYSUTCDATETIME() WHERE org_id = @org AND id = @id", { body: [sql.NVarChar(sql.MAX), JSON.stringify(body)], org: [sql.Int, me.orgId], id: [sql.VarChar(40), id], by: [sql.Int, me.id] });
+      await q("UPDATE dbo.vouchers SET status = 'rejected', body = @body, version = version + 1, updated_by = @by, updated_at = now() WHERE org_id = @org AND id = @id", { body: [sql.NVarChar(sql.MAX), JSON.stringify(body)], org: [sql.Int, me.orgId], id: [sql.VarChar(40), id], by: [sql.Int, me.id] });
     });
     await audit({ orgId: me.orgId, userId: me.id, loginId: me.loginId, action: "voucher_reject", target: id, detail: why, ip: clientIp(req) });
     send(res, 200, { voucher: await loadVoucherView(me.orgId, id) });
@@ -390,7 +388,7 @@ const handlers = {
     const why = str(reason, 300).trim();
     if (!why) throw new HttpError(400, "승인 취소 사유를 입력해 주세요.");
     await tx(async q => {
-      const ex = (await q("SELECT status, body FROM dbo.vouchers WITH (UPDLOCK, ROWLOCK) WHERE org_id = @org AND id = @id", { org: [sql.Int, me.orgId], id: [sql.VarChar(40), id] })).recordset[0];
+      const ex = (await q("SELECT status, body FROM dbo.vouchers WHERE org_id = @org AND id = @id FOR UPDATE", { org: [sql.Int, me.orgId], id: [sql.VarChar(40), id] })).recordset[0];
       if (!ex) throw new HttpError(404, "전표를 찾을 수 없습니다.");
       if (ex.status !== "approved") throw new HttpError(409, "승인된 전표만 취소할 수 있습니다.");
       const body = parseJson(ex.body, {});
@@ -398,7 +396,7 @@ const handlers = {
       if ((await closedYears(q, me.orgId)).has(fyOf(body.date))) throw new HttpError(409, "마감된 회계연도의 전표는 취소할 수 없습니다.");
       body.revocation = { by: me.displayName, at: new Date().toISOString(), reason: why };
       await q("DELETE FROM dbo.voucher_approvals WHERE org_id = @org AND voucher_id = @id", { org: [sql.Int, me.orgId], id: [sql.VarChar(40), id] });
-      await q("UPDATE dbo.vouchers SET status = 'draft', body = @body, version = version + 1, updated_by = @by, updated_at = SYSUTCDATETIME() WHERE org_id = @org AND id = @id", { body: [sql.NVarChar(sql.MAX), JSON.stringify(body)], org: [sql.Int, me.orgId], id: [sql.VarChar(40), id], by: [sql.Int, me.id] });
+      await q("UPDATE dbo.vouchers SET status = 'draft', body = @body, version = version + 1, updated_by = @by, updated_at = now() WHERE org_id = @org AND id = @id", { body: [sql.NVarChar(sql.MAX), JSON.stringify(body)], org: [sql.Int, me.orgId], id: [sql.VarChar(40), id], by: [sql.Int, me.id] });
     });
     await audit({ orgId: me.orgId, userId: me.id, loginId: me.loginId, action: "voucher_revoke", target: id, detail: why, ip: clientIp(req) });
     send(res, 200, { voucher: await loadVoucherView(me.orgId, id) });
@@ -468,9 +466,9 @@ const handlers = {
     if (!ID_RE.test(id || "")) throw new HttpError(400, "비품 ID가 올바르지 않습니다.");
     await tx(async q => {
       const closed = await closedYears(q, me.orgId);
-      const linked = (await q("SELECT id, voucher_date FROM dbo.vouchers WHERE org_id = @org AND JSON_VALUE(body, '$.linkedAssetId') = @a", { org: [sql.Int, me.orgId], a: [sql.VarChar(40), id] })).recordset;
+      const linked = (await q("SELECT id, voucher_date FROM dbo.vouchers WHERE org_id = @org AND (body::jsonb ->> 'linkedAssetId') = @a", { org: [sql.Int, me.orgId], a: [sql.VarChar(40), id] })).recordset;
       if (linked.some(x => closed.has(fyOf(new Date(x.voucher_date).toISOString().slice(0, 10))))) throw new HttpError(409, "마감된 회계연도의 전표가 연결되어 있어 삭제할 수 없습니다.");
-      await q("DELETE FROM dbo.vouchers WHERE org_id = @org AND JSON_VALUE(body, '$.linkedAssetId') = @a", { org: [sql.Int, me.orgId], a: [sql.VarChar(40), id] });
+      await q("DELETE FROM dbo.vouchers WHERE org_id = @org AND (body::jsonb ->> 'linkedAssetId') = @a", { org: [sql.Int, me.orgId], a: [sql.VarChar(40), id] });
       await q("DELETE FROM dbo.records WHERE org_id = @org AND kind = 'asset' AND id = @id", { org: [sql.Int, me.orgId], id: [sql.VarChar(40), id] });
     });
     await audit({ orgId: me.orgId, userId: me.id, loginId: me.loginId, action: "asset_delete", target: id, ip: clientIp(req) });
@@ -534,7 +532,7 @@ const handlers = {
       for (const p of prepared) {
         await q(insertVoucherSql, voucherParams(me.orgId, p.v, p.doc, p.status, me.id));
         for (const [step, at] of p.approvals) {
-          await q("INSERT INTO dbo.voucher_approvals (org_id, voucher_id, step_name, approved_by, approved_at) VALUES (@org, @id, @step, @by, ISNULL(TRY_CONVERT(DATETIME2(0), @at), SYSUTCDATETIME()))", { org: [sql.Int, me.orgId], id: [sql.VarChar(40), p.v.id], step: [sql.NVarChar(50), step], by: [sql.Int, me.id], at: [sql.VarChar(40), typeof at === "string" ? at.slice(0, 40) : null] });
+          await q("INSERT INTO dbo.voucher_approvals (org_id, voucher_id, step_name, approved_by, approved_at) VALUES (@org, @id, @step, @by, COALESCE(@at, now()))", { org: [sql.Int, me.orgId], id: [sql.VarChar(40), p.v.id], step: [sql.NVarChar(50), step], by: [sql.Int, me.id], at: [sql.Timestamp, typeof at === "string" && !isNaN(new Date(at)) ? new Date(at).toISOString() : null] });
         }
       }
       for (const [fy, b] of Object.entries(src.budgets && typeof src.budgets === "object" ? src.budgets : {})) if (/^\d{4}$/.test(fy)) await upsertRecord(q, me.orgId, "budget", fy, cleanBudget(b), me.id);
@@ -561,8 +559,7 @@ module.exports = async (req, res) => {
   } catch (e) {
     if (e instanceof HttpError) return send(res, e.status, { error: e.message });
     if (e && e.code === "DB_WAKING") return send(res, 503, { error: "데이터베이스를 깨우는 중입니다. 잠시 후 자동으로 다시 시도합니다.", code: "db_waking" });
-    const n = e && (e.number || (e.originalError && e.originalError.number));
-    if (n === 2627 || n === 2601) return send(res, 409, { error: "이미 같은 항목이 있습니다. 새로고침 후 다시 시도해 주세요." });
+    if (e && e.code === "23505") return send(res, 409, { error: "이미 같은 항목이 있습니다. 새로고침 후 다시 시도해 주세요." });
     console.error("data error:", op, e && e.message);
     send(res, 500, { error: "서버 오류가 발생했습니다." });
   }

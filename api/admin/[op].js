@@ -20,8 +20,7 @@ class HttpError extends Error {
 }
 
 function isUniqueViolation(e) {
-  const n = e && (e.number || (e.originalError && e.originalError.number));
-  return n === 2627 || n === 2601;
+  return !!e && e.code === "23505";   // PostgreSQL unique_violation
 }
 
 function currentFyKst() {
@@ -88,7 +87,7 @@ const handlers = {
     await requireActor(req, ["super"]);
     const r = await run(
       `SELECT o.id, o.name, o.org_type, o.is_active, o.created_at,
-              (SELECT COUNT(*) FROM dbo.users u WHERE u.org_id = o.id AND u.is_active = 1) AS active_users
+              (SELECT COUNT(*) FROM dbo.users u WHERE u.org_id = o.id AND u.is_active) AS active_users
        FROM dbo.organizations o ORDER BY o.id`
     );
     send(res, 200, { orgs: r.recordset.map(o => ({ id: o.id, name: o.name, orgType: o.org_type, isActive: !!o.is_active, createdAt: o.created_at, activeUsers: o.active_users })) });
@@ -109,14 +108,12 @@ const handlers = {
     let orgId;
     try {
       const r = await run(
-        `SET XACT_ABORT ON;
-         BEGIN TRAN;
-         INSERT INTO dbo.organizations (name, org_type, approval_steps, current_fy) VALUES (@name, @type, @steps, @fy);
-         DECLARE @oid INT = SCOPE_IDENTITY();
+        `WITH o AS (
+           INSERT INTO dbo.organizations (name, org_type, approval_steps, current_fy) VALUES (@name, @type, @steps, @fy) RETURNING id
+         )
          INSERT INTO dbo.users (org_id, login_id, display_name, password_hash, role, must_change_password, created_by)
-           VALUES (@oid, @l, @d, @h, 'admin', 1, @by);
-         COMMIT;
-         SELECT @oid AS id;`,
+           SELECT o.id, @l::varchar, @d::varchar, @h::varchar, 'admin', true, @by FROM o
+           RETURNING org_id AS id`,
         {
           name: [sql.NVarChar(100), name.trim()], type: [sql.VarChar(20), orgType],
           steps: [sql.NVarChar(sql.MAX), JSON.stringify(APPROVAL_PRESETS[orgType])], fy: [sql.Int, currentFyKst()],
@@ -153,7 +150,7 @@ const handlers = {
     const org = await resolveOrg(me, req.query && req.query.orgId);
     const r = await run(
       `SELECT id, login_id, display_name, role, approval_step, is_active, last_login_at, created_at,
-              CASE WHEN locked_until IS NOT NULL AND locked_until > SYSUTCDATETIME() THEN 1 ELSE 0 END AS locked
+              (locked_until IS NOT NULL AND locked_until > now()) AS locked
        FROM dbo.users WHERE org_id = @org ${me.role === "super" ? "AND role = 'admin'" : ""} ORDER BY id`,
       { org: [sql.Int, org.id] }
     );
@@ -216,7 +213,7 @@ const handlers = {
 
     await run(
       // 조회전용 -> 다른 역할이면(관리자가 비밀번호를 알고 있으므로) 다음 로그인 때 본인이 바꾸게 하고, 다른 역할 -> 조회전용이면 강제 변경을 끈다.
-      "UPDATE dbo.users SET display_name = @d, role = @role, approval_step = @step, is_active = @a, must_change_password = CASE WHEN @role = 'viewer' THEN 0 WHEN @prev = 'viewer' THEN 1 ELSE must_change_password END WHERE id = @id AND org_id = @org",
+      "UPDATE dbo.users SET display_name = @d, role = @role, approval_step = @step, is_active = @a, must_change_password = CASE WHEN @role = 'viewer' THEN false WHEN @prev = 'viewer' THEN true ELSE must_change_password END WHERE id = @id AND org_id = @org",
       { d: [sql.NVarChar(50), displayName.trim()], role: [sql.VarChar(20), role], prev: [sql.VarChar(20), t.role], step: [sql.NVarChar(50), step], a: [sql.Bit, active], id: [sql.Int, t.id], org: [sql.Int, org.id] }
     );
     // 역할/활성 상태가 바뀌면 기존 로그인 세션을 끊어 새 권한이 즉시 적용되게 한다.

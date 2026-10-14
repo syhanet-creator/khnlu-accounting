@@ -15,7 +15,7 @@ function cookieHeader(token, maxAgeSec) {
 async function createSession(res, userId, req) {
   const token = crypto.randomBytes(32).toString("hex");
   await run(
-    "INSERT INTO dbo.sessions (token_hash, user_id, expires_at, ip, user_agent) VALUES (@h, @uid, DATEADD(hour, @hrs, SYSUTCDATETIME()), @ip, @ua)",
+    "INSERT INTO dbo.sessions (token_hash, user_id, expires_at, ip, user_agent) VALUES (@h, @uid, now() + (@hrs * interval '1 hour'), @ip, @ua)",
     {
       h: [sql.Char(64), sha256(token)], uid: [sql.Int, userId], hrs: [sql.Int, SESSION_HOURS],
       ip: [sql.VarChar(45), clientIp(req)],
@@ -66,8 +66,8 @@ async function getSessionUser(req) {
      FROM dbo.sessions s
      JOIN dbo.users u ON u.id = s.user_id
      LEFT JOIN dbo.organizations o ON o.id = u.org_id
-     WHERE s.token_hash = @h AND s.expires_at > SYSUTCDATETIME()
-       AND u.is_active = 1 AND (u.org_id IS NULL OR o.is_active = 1)`,
+     WHERE s.token_hash = @h AND s.expires_at > now()
+       AND u.is_active AND (u.org_id IS NULL OR o.is_active)`,
     { h: [sql.Char(64), hash] }
   );
   return toUserView(r.recordset[0]);
