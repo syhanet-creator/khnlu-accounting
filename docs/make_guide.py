@@ -13,7 +13,7 @@ from reportlab.platypus import (BaseDocTemplate, Frame, KeepTogether, PageBreak,
 from reportlab.graphics.shapes import Drawing, Line, Polygon, Rect, String
 
 OUT = sys.argv[1] if len(sys.argv) > 1 else "KHNP-노동조합회계관리_서버판_사용안내서.pdf"
-SITE = "https://khnp-accounting.vercel.app"
+SITE = "https://khnlu-accounting.vercel.app"
 
 pdfmetrics.registerFont(TTFont("Malgun", "C:/Windows/Fonts/malgun.ttf"))
 pdfmetrics.registerFont(TTFont("Malgun-Bold", "C:/Windows/Fonts/malgunbd.ttf"))

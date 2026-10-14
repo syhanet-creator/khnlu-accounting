@@ -1,6 +1,6 @@
 """한수원노동조합 회계관리 시스템 - 서버판 데스크톱 프로그램.
 
-서버(https://khnp-accounting.vercel.app)에 로그인해서 쓰는 창이다. 데이터는 서버(Supabase 데이터베이스)에 저장되고,
+서버(https://khnlu-accounting.vercel.app)에 로그인해서 쓰는 창이다. 데이터는 서버(Supabase 데이터베이스)에 저장되고,
 이 프로그램은 서버 버전에서 지원하지 않는 PC 기능(증빙 파일 첨부·열기·인쇄)만 제공한다.
 """
 import base64
@@ -16,15 +16,15 @@ from urllib.parse import urlparse
 
 import webview
 
-APP_URL = os.environ.get("KHNP_APP_URL", "https://khnp-accounting.vercel.app/")
+APP_URL = os.environ.get("KHNP_APP_URL", "https://khnlu-accounting.vercel.app/")
 APP_TITLE = "한수원노동조합 회계관리 시스템 (서버판)"
-APP_VERSION = "2.2"
+APP_VERSION = "2.3"
 # 사이트가 PC 프로그램 안에서 열렸는지 알아보도록 브라우저 식별 문자열 끝에 붙이는 표시
 USER_AGENT = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) "
               f"Chrome/130.0.0.0 Safari/537.36 Edg/130.0.0.0 KHNP-Desktop/{APP_VERSION}")
 PRINT_TEMP_DIR = os.path.join(tempfile.gettempdir(), "KHNP-Print")
 MAX_PDF_BYTES = 120 * 1024 * 1024
-ALLOWED_HOSTS = {urlparse(APP_URL).hostname}
+ALLOWED_HOSTS = {urlparse(APP_URL).hostname, "khnp-accounting.vercel.app"}   # 옛 주소도 전환 기간 동안 허용
 
 DATA_DIR_NAME = "KHNP-UnionAccounting-Online"   # 로그인 쿠키 등 웹뷰 프로필
 ATTACH_BASE_DIR_NAME = "KHNP-UnionAccounting"   # 기존(오프라인판) 프로그램과 같은 첨부 폴더를 그대로 쓴다

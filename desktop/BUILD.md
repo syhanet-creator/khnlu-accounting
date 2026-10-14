@@ -1,6 +1,6 @@
 # 서버판 PC 프로그램(EXE) 빌드
 
-서버(https://khnp-accounting.vercel.app)를 여는 창 + PC 전용 기능(증빙 파일 첨부·열기·인쇄)입니다.
+서버(https://khnlu-accounting.vercel.app)를 여는 창 + PC 전용 기능(증빙 파일 첨부·열기·인쇄)입니다.
 데이터는 서버에 저장되며 이 프로그램은 데이터를 저장하지 않습니다.
 
 ## 필요한 것
@@ -31,3 +31,4 @@ python -m PyInstaller --noconfirm --clean --onefile --windowed --icon KHNP.ico -
 - 2.0: 서버 사이트를 여는 창 + 증빙 파일(PC 저장)
 - 2.1: 사이트가 만든 "증빙 포함 PDF"를 기본 PDF 프로그램으로 열기(`open_pdf_bytes`), 사용자 식별 문자열에 `KHNP-Desktop/2.1` 표시
 - 2.2: 새 디자인(검정+녹색 아이콘 KHNP.ico, 연결 끊김 안내 화면 스타일). `icons/make_icons.py`가 아니라 `docs/make_icons.py`로 PNG/ICO를 다시 만든다.
+- 2.3: 사이트 주소를 khnlu-accounting.vercel.app 으로 변경(옛 khnp-accounting 주소도 전환 기간 동안 허용 호스트에 포함). 사용자 식별 문자열 KHNP-Desktop/2.3.
