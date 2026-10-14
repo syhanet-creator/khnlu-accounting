@@ -164,13 +164,21 @@ CREATE TABLE IF NOT EXISTS dbo.user_signatures (
 );
 CREATE INDEX IF NOT EXISTS ix_user_signatures_user ON dbo.user_signatures(org_id, user_id);
 
+-- ===== 유지용 호출 기록 =====
+-- Supabase 무료 플랜은 DB 사용이 거의 없으면 1주일 뒤 프로젝트를 일시중지한다. 정기 호출(/api/auth/keepalive)이 하루 두 번 여기에 기록한다.
+CREATE TABLE IF NOT EXISTS dbo.keepalive (
+  id        smallint PRIMARY KEY CHECK (id = 1),
+  last_ping timestamptz NOT NULL DEFAULT now(),
+  pings     bigint NOT NULL DEFAULT 0
+);
+
 -- ===== 접근 통제 =====
 -- 모든 테이블에 행 수준 보안(RLS)을 켠다. Supabase 의 anon/authenticated 역할은 정책이 없어 아무것도 못 한다.
 -- 앱 전용 역할(app_user)만 정책으로 허용하며, 감사 로그는 추가·조회만 허용한다.
 DO $$
 DECLARE t text;
 BEGIN
-  FOREACH t IN ARRAY ARRAY['organizations','users','sessions','vouchers','voucher_approvals','doc_counters','records','audit_log','approval_lines','approval_delegations','user_signatures']
+  FOREACH t IN ARRAY ARRAY['organizations','users','sessions','vouchers','voucher_approvals','doc_counters','records','audit_log','approval_lines','approval_delegations','user_signatures','keepalive']
   LOOP
     EXECUTE format('ALTER TABLE dbo.%I ENABLE ROW LEVEL SECURITY', t);
   END LOOP;

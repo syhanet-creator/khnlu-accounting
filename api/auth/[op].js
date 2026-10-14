@@ -1,4 +1,4 @@
-// 인증 API: /api/auth/{status|login|logout|me|password|bootstrap}
+// 인증 API: /api/auth/{status|login|logout|me|password|bootstrap|keepalive}
 const crypto = require("crypto");
 const { sql, run, audit } = require("../_lib/db");
 const { send, clientIp, getBody, guard } = require("../_lib/http");
@@ -33,6 +33,18 @@ async function userCount() {
 }
 
 const handlers = {
+  // Vercel 정기 실행(cron)이 하루 두 번 부른다. Supabase 무료 프로젝트가 '사용 없음'으로 일시중지되지 않도록 DB에 실제 조회·기록을 한다.
+  // 호출자는 CRON_SECRET(Vercel 이 Authorization: Bearer 로 자동 첨부)을 알아야 한다.
+  async keepalive(req, res) {
+    if (!guard(req, res, ["GET"])) return;
+    const secret = process.env.CRON_SECRET;
+    const given = String(req.headers.authorization || "").replace(/^Bearer\s+/i, "");
+    if (!secret || !given || !sameSecret(given, secret)) return send(res, 401, { error: "unauthorized" });
+    const up = await run("INSERT INTO dbo.keepalive (id, last_ping, pings) VALUES (1, now(), 1) ON CONFLICT (id) DO UPDATE SET last_ping = now(), pings = dbo.keepalive.pings + 1 RETURNING last_ping, pings");
+    const users = await run("SELECT COUNT(*) AS n FROM dbo.users");
+    send(res, 200, { ok: true, at: up.recordset[0].last_ping, pings: up.recordset[0].pings, users: users.recordset[0].n });
+  },
+
   // 최초 설정(첫 시스템관리자 만들기)이 필요한지
   async status(req, res) {
     if (!guard(req, res, ["GET"])) return;

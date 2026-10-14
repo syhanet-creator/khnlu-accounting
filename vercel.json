@@ -55,5 +55,15 @@
         }
       ]
     }
+  ],
+  "crons": [
+    {
+      "path": "/api/auth/keepalive",
+      "schedule": "0 18 * * *"
+    },
+    {
+      "path": "/api/auth/keepalive",
+      "schedule": "0 6 * * *"
+    }
   ]
 }
