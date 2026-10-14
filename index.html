@@ -1546,7 +1546,7 @@ function DesktopInstall({ variant, onDismiss }) {
 }
 
 // 회계결의서 증빙 / 계약서 등 첨부파일 관리.
-// 새 첨부는 서버(Azure Blob)에 저장되어 웹·안드로이드 앱·PC 프로그램 어디서든 열 수 있다.
+// 새 첨부는 서버(Supabase 저장소)에 저장되어 웹·안드로이드 앱·PC 프로그램 어디서든 열 수 있다.
 // 예전 PC 프로그램(EXE)에서 이 PC에만 저장했던 첨부(path)는 그 PC의 프로그램에서만 열린다.
 const ATTACH_EXTS = ["pdf", "jpg", "jpeg", "png", "webp", "heic", "hwp", "hwpx", "doc", "docx", "xls", "xlsx", "ppt", "pptx"];
 const ATTACH_ACCEPT = ".pdf,.jpg,.jpeg,.png,.webp,.heic,.hwp,.hwpx,.doc,.docx,.xls,.xlsx,.ppt,.pptx,image/*";
@@ -3192,8 +3192,8 @@ function SettingsScreen({ data, isAdmin, onImport, saveStatus, menuClickTotal })
     ),
     React.createElement(Card, { title: "데이터 백업 / 복원" },
       saveStatus === "error" && React.createElement("p", { className: "note-text", style: { color: "var(--danger)", fontWeight: 600 } }, "⚠ 서버 저장에 실패했습니다. 인터넷 연결을 확인한 뒤 새로고침해 서버의 최신 상태를 확인하세요. 필요하면 지금 백업 파일을 내려받아 두세요."),
-      React.createElement("p", { className: "note-text" }, "이 프로그램의 데이터는 서버(Azure SQL 데이터베이스)에 저장되며, 로그인한 담당자 모두가 같은 데이터를 봅니다. 별도 보관용으로 주기적으로(예: 매일 업무 종료 후) 백업 파일(JSON)을 내려받아 두시길 권장합니다."),
-      React.createElement("p", { className: "note-text" }, "증빙 파일(PDF·사진 등)은 서버의 비공개 저장소(Azure Blob)에 저장되어, 웹·안드로이드 앱·PC 프로그램에서 모두 열 수 있습니다. 백업 파일(JSON)에는 파일 이름 정보만 들어가고 파일 자체는 포함되지 않습니다."),
+      React.createElement("p", { className: "note-text" }, "이 프로그램의 데이터는 서버(Supabase 데이터베이스)에 저장되며, 로그인한 담당자 모두가 같은 데이터를 봅니다. 별도 보관용으로 주기적으로(예: 매일 업무 종료 후) 백업 파일(JSON)을 내려받아 두시길 권장합니다."),
+      React.createElement("p", { className: "note-text" }, "증빙 파일(PDF·사진 등)은 서버의 비공개 저장소(Supabase Storage)에 저장되어, 웹·안드로이드 앱·PC 프로그램에서 모두 열 수 있습니다. 백업 파일(JSON)에는 파일 이름 정보만 들어가고 파일 자체는 포함되지 않습니다."),
       React.createElement("div", { style: { display: "flex", gap: 10, marginTop: 12, flexWrap: "wrap" } },
         React.createElement(Btn, { variant: "primary", icon: "download", onClick: () => downloadBackup(data) }, "백업 파일 다운로드 (.json)"),
         isAdmin && React.createElement(Btn, { variant: "outline", icon: "upload", onClick: () => fileRef.current.click() }, "백업 파일 서버로 가져오기"),

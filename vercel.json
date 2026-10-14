@@ -1,6 +1,6 @@
 {
   "regions": [
-    "syd1"
+    "icn1"
   ],
   "functions": {
     "api/**/*.js": {

@@ -1,5 +1,5 @@
 // 증빙 파일 API: /api/files/{upload_url|download_url|delete}
-// 파일 자체는 Azure Blob에 직접 올리고 내려받으며, 이 API는 권한을 확인하고 임시 주소만 발급한다.
+// 파일 자체는 Supabase Storage에 직접 올리고 내려받으며, 이 API는 권한을 확인하고 임시 주소만 발급한다.
 const crypto = require("crypto");
 const { sql, run, audit } = require("../_lib/db");
 const { send, clientIp, getBody, guard, HttpError } = require("../_lib/http");
@@ -17,15 +17,12 @@ async function requireUser(req, roles) {
   return me;
 }
 
-// 설치 파일 정보(없으면 null). 파일 자체는 올리지 않고 속성만 읽는다.
+// 설치 파일 정보(없으면 null). 파일 자체는 받지 않고 속성과 버전 파일만 읽는다.
 async function installerInfo() {
-  try {
-    const props = await blob.installerContainer().getBlockBlobClient(blob.INSTALLER_BLOB).getProperties();
-    return { version: (props.metadata && props.metadata.version) || "", size: props.contentLength, updatedAt: props.lastModified };
-  } catch (e) {
-    if (e && (e.statusCode === 404 || e.code === "BlobNotFound" || e.code === "ContainerNotFound")) return null;
-    throw e;
-  }
+  const info = await blob.objectInfo(blob.INSTALLER_BLOB, blob.DOWNLOADS_BUCKET());
+  if (!info) return null;
+  const v = await blob.readJson(blob.INSTALLER_VERSION_BLOB);
+  return { version: (v && v.version) || "", size: info.size, updatedAt: info.last_modified || info.updated_at || null };
 }
 
 const handlers = {
@@ -48,11 +45,7 @@ const handlers = {
     }
     const info = await installerInfo();
     if (!info) throw new HttpError(404, "설치 파일이 아직 준비되지 않았습니다. 관리자에게 문의하세요.");
-    const url = blob.sasUrl(blob.INSTALLER_BLOB, "r", 5, {
-      container: blob.installerContainer(),
-      contentType: "application/octet-stream",
-      contentDisposition: blob.dispositionFor("attachment", blob.INSTALLER_FILENAME),
-    });
+    const url = await blob.signedDownloadUrl(blob.INSTALLER_BLOB, 5, { bucket: blob.DOWNLOADS_BUCKET(), downloadName: blob.INSTALLER_FILENAME });
     await audit({ orgId: me ? me.orgId : null, userId: me ? me.id : null, loginId: me ? me.loginId : null, action: "installer_download", target: blob.INSTALLER_BLOB, detail: `v${info.version}${me ? "" : " (로그인 전)"}`, ip });
     send(res, 200, { url, filename: blob.INSTALLER_FILENAME, ...info });
   },
@@ -73,11 +66,11 @@ const handlers = {
 
     const attId = "f" + crypto.randomBytes(9).toString("hex");
     const blobPath = `${me.orgId}/${category}/${entityId}/${attId}.${ext}`;
-    const uploadUrl = blob.sasUrl(blobPath, "w", 10, { contentType: type.mime });
+    const uploadUrl = await blob.signedUploadUrl(blobPath);
     await audit({ orgId: me.orgId, userId: me.id, loginId: me.loginId, action: "file_upload_url", target: blobPath, detail: `${String(name).slice(0, 80)} (${bytes}B)`, ip: clientIp(req) });
     send(res, 200, {
       uploadUrl,
-      headers: { "x-ms-blob-type": "BlockBlob", "Content-Type": type.mime },
+      headers: { "Content-Type": type.mime },
       attachment: { id: attId, name: String(name).slice(0, 200), size: bytes, blob: blobPath, contentType: type.mime, addedAt: new Date().toISOString() },
     });
   },
@@ -90,7 +83,7 @@ const handlers = {
     if (!blob.isOrgBlob(me.orgId, blobPath)) throw new HttpError(403, "열 수 없는 파일입니다.");
     const type = blob.TYPES[blob.extOf(blobPath)];
     const kind = download || !type.inline ? "attachment" : "inline";
-    const url = blob.sasUrl(blobPath, "r", 5, { contentType: type.mime, contentDisposition: blob.dispositionFor(kind, name || "증빙파일." + blob.extOf(blobPath)) });
+    const url = await blob.signedDownloadUrl(blobPath, 5, kind === "attachment" ? { downloadName: name || "증빙파일." + blob.extOf(blobPath) } : {});
     send(res, 200, { url });
   },
 
