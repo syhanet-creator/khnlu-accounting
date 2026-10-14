@@ -13,7 +13,7 @@ const MAX_ACTIVE_DELEGATIONS = 50;
 const MAX_DELEGATION_DAYS = 120;
 const str = (x, max) => (typeof x === "string" ? x.slice(0, max) : "");
 const parseJson = (s, f) => { try { return JSON.parse(s); } catch (e) { return f; } };
-const isUnique = e => { const n = e && (e.number || (e.originalError && e.originalError.number)); return n === 2627 || n === 2601; };
+const isUnique = e => !!e && e.code === "23505";   // PostgreSQL unique_violation
 
 async function requireUser(req, roles) {
   const me = await getSessionUser(req);
@@ -47,7 +47,7 @@ function parsePng(dataUrl) {
 // 결재 기록에 쓰이지 않은 이전 서명은 지운다(개인정보 최소 보관).
 async function dropUnusedSignature(orgId, userId, keepId) {
   await run(
-    `DELETE s FROM dbo.user_signatures s WHERE s.org_id = @org AND s.user_id = @u AND (@keep IS NULL OR s.id <> @keep)
+    `DELETE FROM dbo.user_signatures s WHERE s.org_id = @org AND s.user_id = @u AND (@keep IS NULL OR s.id <> @keep)
        AND NOT EXISTS (SELECT 1 FROM dbo.voucher_approvals a WHERE a.signature_id = s.id)
        AND NOT EXISTS (SELECT 1 FROM dbo.users x WHERE x.signature_id = s.id)`,
     { org: [sql.Int, orgId], u: [sql.Int, userId], keep: [sql.Int, keepId] });
@@ -68,7 +68,7 @@ const handlers = {
     if (!guard(req, res, ["POST"])) return;
     const me = await requireUser(req, ["approver"]);
     const { buf, width, height } = parsePng(getBody(req).image);
-    const ins = await run("INSERT INTO dbo.user_signatures (org_id, user_id, mime, data, width, height) OUTPUT inserted.id VALUES (@org, @u, 'image/png', @d, @w, @h)",
+    const ins = await run("INSERT INTO dbo.user_signatures (org_id, user_id, mime, data, width, height) VALUES (@org, @u, 'image/png', @d, @w, @h) RETURNING id",
       { org: [sql.Int, me.orgId], u: [sql.Int, me.id], d: [sql.VarBinary(sql.MAX), buf], w: [sql.Int, width], h: [sql.Int, height] });
     const id = ins.recordset[0].id;
     await run("UPDATE dbo.users SET signature_id = @id WHERE id = @u AND org_id = @org", { id: [sql.Int, id], u: [sql.Int, me.id], org: [sql.Int, me.orgId] });
@@ -160,7 +160,7 @@ const handlers = {
   async people(req, res) {
     if (!guard(req, res, ["GET"])) return;
     const me = await requireUser(req, ["admin", "approver"]);
-    const r = await run("SELECT id, display_name, approval_step FROM dbo.users WHERE org_id = @org AND role = 'approver' AND is_active = 1 ORDER BY id", { org: [sql.Int, me.orgId] });
+    const r = await run("SELECT id, display_name, approval_step FROM dbo.users WHERE org_id = @org AND role = 'approver' AND is_active ORDER BY id", { org: [sql.Int, me.orgId] });
     send(res, 200, { orgSteps: me.org.approvalSteps, approvers: r.recordset.map(u => ({ id: u.id, displayName: u.display_name, step: u.approval_step })) });
   },
 
@@ -173,7 +173,7 @@ const handlers = {
               d.from_date, d.to_date, d.note, uc.display_name AS created_name
        FROM dbo.approval_delegations d
        JOIN dbo.users ua ON ua.id = d.absent_user_id JOIN dbo.users ud ON ud.id = d.delegate_user_id LEFT JOIN dbo.users uc ON uc.id = d.created_by
-       WHERE d.org_id = @org AND d.is_active = 1 AND d.to_date >= DATEADD(day, -30, CAST(@today AS DATE)) ${scope}
+       WHERE d.org_id = @org AND d.is_active AND d.to_date >= (CAST(@today AS DATE) - 30) ${scope}
        ORDER BY d.from_date DESC, d.id DESC`,
       { org: [sql.Int, me.orgId], me: [sql.Int, me.id], today: [sql.VarChar(10), todayKst()] }
     );
@@ -194,11 +194,11 @@ const handlers = {
     if (to < from) throw new HttpError(400, "종료일이 시작일보다 빠를 수 없습니다.");
     if ((new Date(to) - new Date(from)) / 86400000 > MAX_DELEGATION_DAYS) throw new HttpError(400, `대결 기간은 최대 ${MAX_DELEGATION_DAYS}일까지 지정할 수 있습니다.`);
     if (to < todayKst()) throw new HttpError(400, "이미 지난 기간입니다.");
-    const users = (await run("SELECT id, display_name, approval_step FROM dbo.users WHERE org_id = @org AND role = 'approver' AND is_active = 1 AND id IN (@a, @d)", { org: [sql.Int, me.orgId], a: [sql.Int, absent], d: [sql.Int, delegate] })).recordset;
+    const users = (await run("SELECT id, display_name, approval_step FROM dbo.users WHERE org_id = @org AND role = 'approver' AND is_active AND id IN (@a, @d)", { org: [sql.Int, me.orgId], a: [sql.Int, absent], d: [sql.Int, delegate] })).recordset;
     const ua = users.find(u => u.id === absent), ud = users.find(u => u.id === delegate);
     if (!ua || ua.approval_step !== step) throw new HttpError(400, `부재자는 [${step}] 단계의 결재자여야 합니다.`);
     if (!ud) throw new HttpError(400, "대결자는 같은 조직의 사용 중인 결재자여야 합니다.");
-    const c = (await run("SELECT COUNT(*) AS n FROM dbo.approval_delegations WHERE org_id = @org AND is_active = 1 AND to_date >= CAST(@t AS DATE)", { org: [sql.Int, me.orgId], t: [sql.VarChar(10), todayKst()] })).recordset[0].n;
+    const c = (await run("SELECT COUNT(*) AS n FROM dbo.approval_delegations WHERE org_id = @org AND is_active AND to_date >= CAST(@t AS DATE)", { org: [sql.Int, me.orgId], t: [sql.VarChar(10), todayKst()] })).recordset[0].n;
     if (c >= MAX_ACTIVE_DELEGATIONS) throw new HttpError(409, "진행 중인 대결 설정이 너무 많습니다. 끝난 설정을 정리해 주세요.");
     await run(
       `INSERT INTO dbo.approval_delegations (org_id, step_name, absent_user_id, delegate_user_id, from_date, to_date, note, created_by)
@@ -216,7 +216,7 @@ const handlers = {
     const n = Number(getBody(req).id);
     if (!Number.isInteger(n)) throw new HttpError(400, "대결 설정이 올바르지 않습니다.");
     const scope = me.role === "admin" ? "" : "AND absent_user_id = @me";
-    const u = await run(`UPDATE dbo.approval_delegations SET is_active = 0 WHERE id = @id AND org_id = @org AND is_active = 1 ${scope}`, { id: [sql.Int, n], org: [sql.Int, me.orgId], me: [sql.Int, me.id] });
+    const u = await run(`UPDATE dbo.approval_delegations SET is_active = false WHERE id = @id AND org_id = @org AND is_active ${scope}`, { id: [sql.Int, n], org: [sql.Int, me.orgId], me: [sql.Int, me.id] });
     if (!u.rowsAffected[0]) throw new HttpError(404, "대결 설정을 찾을 수 없거나 취소할 권한이 없습니다.");
     await audit({ orgId: me.orgId, userId: me.id, loginId: me.loginId, action: "delegation_cancel", target: String(n), ip: clientIp(req) });
     send(res, 200, { ok: true });

@@ -16,7 +16,7 @@ python -m PyInstaller --noconfirm --clean --onefile --windowed --icon KHNP.ico -
 
 ## 동작 메모
 - 다른 서버 주소로 시험하려면 환경변수 `KHNP_APP_URL`을 지정합니다.
-- 새 증빙 파일은 사이트가 서버(Azure Blob)에 올리므로 이 프로그램의 파일 API는 쓰이지 않습니다.
+- 새 증빙 파일은 사이트가 서버(Supabase Storage)에 올리므로 이 프로그램의 파일 API는 쓰이지 않습니다.
   예전에 PC에만 저장했던 증빙(`%LOCALAPPDATA%\KHNP-UnionAccounting\증빙자료`)을 열기·인쇄·삭제하는 용도로만 남겨 두었고,
   첨부 폴더 밖 경로는 거부됩니다.
 - 우리 서버 주소가 아닌 페이지로 이동하면 자동으로 처음 화면으로 되돌립니다.
@@ -24,7 +24,7 @@ python -m PyInstaller --noconfirm --clean --onefile --windowed --icon KHNP.ico -
 
 ## 배포 (사이트에서 내려받게 하기)
 1. 위 빌드로 만든 `dist\KHNP-Online-Installer.exe`를 확인한다 (현재 버전은 `khnp_installer_online.py`의 `APP_VERSION`, `khnp_app_online.py`의 `APP_VERSION`).
-2. 저장소 루트에서 `node desktop/upload_installer.js <설치프로그램 경로> <버전>` 실행 → 비공개 컨테이너 `downloads`에 올라간다.
+2. 저장소 루트에서 `node desktop/upload_installer.js <설치프로그램 경로> <버전>` 실행 → 비공개 버킷 `downloads`에 올라간다.
 3. 사이트는 Windows PC 브라우저에 로그인 화면 버튼, 로그인 후 안내 배너, 설정/백업 카드(시스템관리자 화면 포함)로 `설치 파일 내려받기`를 보여 준다 (`/api/files/app_info`, `/api/files/app_download`). 파일은 비공개 저장소에 있고 5분짜리 임시 주소로 제공된다(로그인 전에도 가능, 같은 IP에서 1시간 10회 제한, 내려받기는 감사로그에 기록).
 
 ## 버전 기록

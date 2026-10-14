@@ -1,6 +1,6 @@
 """한수원노동조합 회계관리 시스템 - 서버판 데스크톱 프로그램.
 
-서버(https://khnp-accounting.vercel.app)에 로그인해서 쓰는 창이다. 데이터는 서버(Azure SQL)에 저장되고,
+서버(https://khnp-accounting.vercel.app)에 로그인해서 쓰는 창이다. 데이터는 서버(Supabase 데이터베이스)에 저장되고,
 이 프로그램은 서버 버전에서 지원하지 않는 PC 기능(증빙 파일 첨부·열기·인쇄)만 제공한다.
 """
 import base64

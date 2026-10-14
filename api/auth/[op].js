@@ -21,7 +21,7 @@ function sameSecret(a, b) {
 async function ipTooManyFails(ip) {
   if (!ip) return false;
   const r = await run(
-    "SELECT COUNT(*) AS n FROM dbo.audit_log WHERE ip = @ip AND action IN ('login_fail','bootstrap_fail') AND at > DATEADD(minute, -10, SYSUTCDATETIME())",
+    `SELECT COUNT(*) AS n FROM dbo.audit_log WHERE ip = @ip AND action IN ('login_fail','bootstrap_fail') AND "at" > now() - interval '10 minutes'`,
     { ip: [sql.VarChar(45), ip] }
   );
   return r.recordset[0].n >= IP_FAIL_LIMIT;
@@ -51,10 +51,10 @@ const handlers = {
     }
 
     const r = await run(
-      `SELECT TOP 1 u.id, u.org_id, u.login_id, u.password_hash,
-              CASE WHEN u.is_active = 1 AND (u.org_id IS NULL OR o.is_active = 1) THEN 1 ELSE 0 END AS is_active,
-              CASE WHEN u.locked_until IS NOT NULL AND u.locked_until > SYSUTCDATETIME() THEN 1 ELSE 0 END AS locked
-       FROM dbo.users u LEFT JOIN dbo.organizations o ON o.id = u.org_id WHERE u.login_id = @l`,
+      `SELECT u.id, u.org_id, u.login_id, u.password_hash,
+              (u.is_active AND (u.org_id IS NULL OR o.is_active)) AS is_active,
+              (u.locked_until IS NOT NULL AND u.locked_until > now()) AS locked
+       FROM dbo.users u LEFT JOIN dbo.organizations o ON o.id = u.org_id WHERE lower(u.login_id) = lower(@l) LIMIT 1`,
       { l: [sql.NVarChar(50), loginId.trim()] }
     );
     const user = r.recordset[0];
@@ -74,7 +74,7 @@ const handlers = {
       // UPDATE의 우변은 모두 갱신 전 값을 쓰므로 아래 계산이 맞다.
       await run(
         `UPDATE dbo.users SET
-           locked_until = CASE WHEN failed_attempts + 1 >= @max THEN DATEADD(minute, @mins, SYSUTCDATETIME()) ELSE locked_until END,
+           locked_until = CASE WHEN failed_attempts + 1 >= @max THEN now() + (@mins * interval '1 minute') ELSE locked_until END,
            failed_attempts = CASE WHEN failed_attempts + 1 >= @max THEN 0 ELSE failed_attempts + 1 END
          WHERE id = @id`,
         { id: [sql.Int, user.id], max: [sql.Int, MAX_FAILS], mins: [sql.Int, LOCK_MINUTES] }
@@ -83,8 +83,8 @@ const handlers = {
       return send(res, 401, { error: BAD_LOGIN });
     }
 
-    await run("UPDATE dbo.users SET failed_attempts = 0, locked_until = NULL, last_login_at = SYSUTCDATETIME() WHERE id = @id", { id: [sql.Int, user.id] });
-    await run("DELETE FROM dbo.sessions WHERE user_id = @id AND expires_at < SYSUTCDATETIME()", { id: [sql.Int, user.id] });
+    await run("UPDATE dbo.users SET failed_attempts = 0, locked_until = NULL, last_login_at = now() WHERE id = @id", { id: [sql.Int, user.id] });
+    await run("DELETE FROM dbo.sessions WHERE user_id = @id AND expires_at < now()", { id: [sql.Int, user.id] });
     await createSession(res, user.id, req);
     await audit({ orgId: user.org_id, userId: user.id, loginId: user.login_id, action: "login", ip });
     send(res, 200, { user: await loadUserById(user.id) });
@@ -123,7 +123,7 @@ const handlers = {
     if (newPassword === currentPassword) return send(res, 400, { error: "새 비밀번호는 현재 비밀번호와 달라야 합니다." });
 
     const hash = await hashPassword(newPassword);
-    await run("UPDATE dbo.users SET password_hash = @h, must_change_password = 0 WHERE id = @id", { h: [sql.VarChar(200), hash], id: [sql.Int, me.id] });
+    await run("UPDATE dbo.users SET password_hash = @h, must_change_password = false WHERE id = @id", { h: [sql.VarChar(200), hash], id: [sql.Int, me.id] });
     // 이 세션을 제외한 다른 로그인은 모두 끊는다.
     await run("DELETE FROM dbo.sessions WHERE user_id = @id AND token_hash <> @h", { id: [sql.Int, me.id], h: [sql.Char(64), currentTokenHash(req)] });
     await audit({ orgId: me.orgId, userId: me.id, loginId: me.loginId, action: "password_change", ip: clientIp(req) });
@@ -151,7 +151,7 @@ const handlers = {
     const hash = await hashPassword(password);
     const ins = await run(
       `INSERT INTO dbo.users (login_id, display_name, password_hash, role, must_change_password)
-       SELECT @l, @d, @h, 'super', 0 WHERE NOT EXISTS (SELECT 1 FROM dbo.users)`,
+       SELECT @l::varchar, @d::varchar, @h::varchar, 'super', false WHERE NOT EXISTS (SELECT 1 FROM dbo.users)`,
       { l: [sql.NVarChar(50), loginId], d: [sql.NVarChar(50), displayName.trim()], h: [sql.VarChar(200), hash] }
     );
     if (!ins.rowsAffected[0]) return send(res, 409, { error: "이미 초기 설정이 완료되었습니다." });
