@@ -1,7 +1,9 @@
-# 서버화 설계 (Azure SQL + Vercel)
+# 서버화 설계 (Supabase + Vercel)
+
+> **2026-10-15 이관 완료**: 데이터베이스는 Azure SQL → **Supabase(PostgreSQL, 서울)**, 증빙·설치 파일 저장소는 Azure Blob → **Supabase Storage**로 옮겼고 Azure 리소스는 삭제했다. 아래 본문의 "Azure SQL / Azure Blob" 설명은 설계 당시 기준이며, 현재 스키마는 `db/supabase/schema.pg.sql`(적용: `node db/supabase/apply.js`), 접속 정보는 `PG_*`·`SUPABASE_*` 환경변수다. 서버 코드의 쿼리는 `@이름` 매개변수 표기를 그대로 쓰되 `api/_lib/db.js`가 PostgreSQL 매개변수(`$n`)로 바꿔 실행한다.
 
 현재: 전체 데이터(`data` 객체)를 브라우저 localStorage에 저장, 로그인 없음.
-목표: 전표·거래 데이터를 Azure SQL에 저장하고, 로그인(ID/비밀번호)과 역할별 접근권한을 서버에서 강제한다.
+목표: 전표·거래 데이터를 데이터베이스(현재 Supabase)에 저장하고, 로그인(ID/비밀번호)과 역할별 접근권한을 서버에서 강제한다.
 결정 사항: 다중 조직(중앙/본부/지부) · 4단계 역할 · 관리자가 계정 발급 · 기존 데이터는 백업 JSON 업로드로 이전.
 
 ## 1. 구조
