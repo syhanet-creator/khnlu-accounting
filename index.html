@@ -849,6 +849,16 @@ select.kinput {
 window.__KHNP_DATA__ = null;
 </script>
 <script>
+// 그룹웨어에서 넘어온 로그인 결과 안내(/api/auth/sso 가 /?sso=코드 로 돌려보낸다)
+(function () {
+  var m = /[?&]sso=([a-z]+)/.exec(location.search);
+  if (!m) return;
+  var msg = { nolink: "그룹웨어 계정과 연결된 회계 계정이 없습니다. 시스템관리자에게 계정 연결을 요청해 주세요.", expired: "로그인 확인 시간이 지났습니다. 그룹웨어에서 '회계'를 다시 눌러 주세요.", invalid: "올바르지 않은 로그인 요청입니다.", busy: "요청이 많습니다. 잠시 후 다시 시도해 주세요.", setup: "그룹웨어 연동이 아직 설정되지 않았습니다." }[m[1]];
+  history.replaceState(null, "", location.pathname);
+  if (msg) setTimeout(function () { alert(msg); }, 300);
+})();
+</script>
+<script>
 // 예산편성 계정과목표 (한수원노동조합 회계규정 별표3 기반) + 복식부기 계정 확장
 // 구조: 관(gwan) > 항(hang) > 목(mok)
 
@@ -1667,6 +1677,63 @@ function AttachmentManager({ category, entityId, attachments, onChange, readOnly
   );
 }
 
+// ===== 그룹웨어 문서 연결 (품의서·기안문 등 결재가 끝난 문서) =====
+// 회계결의서에 PDF를 따로 올리지 않아도, 한수원노조 그룹웨어에서 결재 완료된 우리 조직 문서를 골라 연결한다.
+// 연결 가능한 문서의 범위(중앙/본부/지부)는 서버가 조직 연결 기준으로 정한다.
+function GwDocLinker({ docs, onChange, readOnly }) {
+  const list = docs || [];
+  const [open, setOpen] = useState(false);
+  const [q, setQ] = useState("");
+  const [found, setFound] = useState(null);
+  const [err, setErr] = useState("");
+  const [info, setInfo] = useState({ linked: null, gwUrl: "" });
+  useEffect(() => { apiCall("gw/status").then(setInfo).catch(() => {}); }, []);
+  useEffect(() => {
+    if (!open) return;
+    let off = false;
+    setFound(null); setErr("");
+    const t = setTimeout(() => {
+      apiRetrying("gw/docs?q=" + encodeURIComponent(q))
+        .then(r => { if (!off) { setFound(r.docs); setInfo(i => ({ ...i, gwUrl: r.gwUrl })); } })
+        .catch(e => { if (!off) setErr(e.message); });
+    }, 250);
+    return () => { off = true; clearTimeout(t); };
+  }, [open, q]);
+  const url = d => `${info.gwUrl || "https://khnlu-groupware.vercel.app"}/gw/docs?open=${d.id}&t=document`;
+  const has = id => list.some(x => x.id === id);
+  return React.createElement("div", { className: "attach-manager" },
+    React.createElement("div", { className: "attach-list" },
+      list.length === 0
+        ? React.createElement("p", { className: "attach-empty" }, "연결된 그룹웨어 문서가 없습니다.")
+        : list.map(d => React.createElement("div", { key: d.id, className: "attach-chip" },
+            React.createElement(Icon, { name: "file", size: 14 }),
+            React.createElement("a", { className: "attach-name", href: url(d), target: "_blank", rel: "noopener", title: "그룹웨어에서 결재 내용·전자인장 문서 보기" }, (d.docNo ? d.docNo + " · " : "") + d.title),
+            React.createElement("span", { className: "attach-size" }, d.date),
+            !readOnly && React.createElement("div", { className: "attach-actions-row" },
+              React.createElement("button", { className: "icon-btn danger", title: "연결 해제", onClick: () => onChange(list.filter(x => x.id !== d.id)) }, React.createElement(Icon, { name: "trash", size: 13 }))
+            )
+          ))
+    ),
+    !readOnly && React.createElement("div", { className: "attach-add-btn", style: { display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" } },
+      info.linked === false
+        ? React.createElement("span", { style: { color: "var(--ink-soft)", fontSize: 11.5 } }, "이 조직은 아직 그룹웨어와 연결되지 않았습니다. 시스템관리자에게 조직 연결을 요청해 주세요.")
+        : React.createElement(Btn, { variant: "outline", size: "sm", onClick: () => setOpen(true) }, "+ 그룹웨어 문서 연결"),
+      React.createElement("span", { style: { color: "var(--ink-soft)", fontSize: 11.5 } }, "결재가 끝난 기안문·시행문만 연결됩니다")
+    ),
+    React.createElement(Modal, { open, onClose: () => setOpen(false), title: "그룹웨어 문서 연결", width: 640 },
+      React.createElement("input", { className: "kinput", placeholder: "제목 또는 문서번호로 검색", value: q, onChange: e => setQ(e.target.value), autoFocus: true }),
+      err && React.createElement("p", { className: "voucher-tip tip-warn" }, err),
+      !err && found === null && React.createElement("p", { className: "attach-empty" }, "불러오는 중..."),
+      !err && found && found.length === 0 && React.createElement("p", { className: "attach-empty" }, "연결할 수 있는 문서가 없습니다. (결재가 끝난 우리 조직 문서만 표시됩니다)"),
+      found && found.map(d => React.createElement("div", { key: d.id, className: "attach-chip", style: { marginTop: 6 } },
+        React.createElement("span", { className: "attach-name", style: { cursor: "default" } }, (d.docNo ? d.docNo + " · " : "") + d.title),
+        React.createElement("span", { className: "attach-size" }, `${d.orgName} · ${d.author} · ${d.date}`),
+        React.createElement(Btn, { variant: has(d.id) ? "ghost" : "primary", size: "sm", disabled: has(d.id), onClick: () => { onChange([...list, d]); } }, has(d.id) ? "연결됨" : "연결")
+      ))
+    )
+  );
+}
+
 function Modal({ open, onClose, title, children, width }) {
   if (!open) return null;
   return React.createElement("div", { className: "kmodal-overlay", onClick: onClose },
@@ -2194,6 +2261,8 @@ function VoucherForm({ data, voucher, readOnly, onChange, onSave, onCancel, acco
         React.createElement(Field, { label: "증빙첨부 메모", hint: "영수증/견적서 등 실물 증빙은 별도 보관, 여기엔 메모만 기록" },
           React.createElement("input", { className: "kinput", value: v.attachNote || "", onChange: e => update({ attachNote: e.target.value }) })),
       ),
+      React.createElement(Field, { label: "그룹웨어 문서(품의서 등)", hint: "그룹웨어에서 결재가 끝난 품의서·기안문을 연결하면 PDF를 따로 올리지 않아도 됩니다" },
+        React.createElement(GwDocLinker, { docs: v.gwDocs, readOnly: !!readOnly, onChange: next => update({ gwDocs: next }) })),
       React.createElement(Field, { label: "증빙 파일", hint: "영수증·세금계산서 등 PDF나 사진(폰에서는 바로 촬영)을 여러 개 첨부할 수 있습니다" },
         React.createElement(AttachmentManager, {
           category: "voucher", entityId: v.id, attachments: v.attachments, readOnly: !!readOnly,
@@ -2311,6 +2380,7 @@ function buildVoucherPrintNode(v, data) {
   const frow = (l, t) => { const tr = el("tr"); tr.appendChild(el("td", lab, l)); tr.appendChild(el("td", val, t)); foot.appendChild(tr); };
   frow("입(출)금처", [v.payee, v.payeeName].filter(Boolean).join(" / "));
   if (v.attachNote) frow("증빙 메모", v.attachNote);
+  if ((v.gwDocs || []).length) frow("연결 문서(그룹웨어)", v.gwDocs.map(d => `${d.docNo ? d.docNo + " " : ""}${d.title}`).join(" / "));
   const names = (v.attachments || []).map(a => a.name).filter(Boolean);
   frow("첨부 증빙", names.length ? `${names.length}건 — ${names.join(", ")}` : "없음");
   root.appendChild(foot);

@@ -4,6 +4,7 @@
 // 조직(org_id)은 항상 로그인 세션에서 가져온다. 권한·결재 순서·전표번호는 전부 이 서버가 정한다.
 const { sql, run, tx, audit } = require("../_lib/db");
 const { send, clientIp, getBody, guard, HttpError } = require("../_lib/http");
+const gw = require("../_lib/gw");
 const { getSessionUser } = require("../_lib/session");
 const { isOrgBlob, TYPES: BLOB_TYPES } = require("../_lib/blob");
 const { lineStepsOf, resolveLine, canActOnStep, DEFAULT_LINE_NAME } = require("../_lib/approval");
@@ -259,7 +260,10 @@ const handlers = {
         v.approvalLine = { id: chosenLine.id, name: chosenLine.name, steps: chosenLine.steps, ...(note ? { note } : {}), by: me.displayName, at: new Date().toISOString() };
       }
       if ((await closedYears(q, me.orgId)).has(fyOf(v.date))) throw new HttpError(409, `${fyOf(v.date)}회계연도는 마감되어 전표를 작성·수정할 수 없습니다.`);
-      const ex = (await q("SELECT status, version, created_by FROM dbo.vouchers WHERE org_id = @org AND id = @id FOR UPDATE", { org: [sql.Int, me.orgId], id: [sql.VarChar(40), v.id] })).recordset[0];
+      const ex = (await q("SELECT status, version, created_by, body FROM dbo.vouchers WHERE org_id = @org AND id = @id FOR UPDATE", { org: [sql.Int, me.orgId], id: [sql.VarChar(40), v.id] })).recordset[0];
+      // 연결한 그룹웨어 문서: 이 조직에서 연결할 수 있는 문서만 남긴다(번호·제목은 DB 값)
+      const gwDocs = await gw.verifyDocs(me.orgId, body.voucher.gwDocs, ex ? (parseJson(ex.body, {}).gwDocs || []) : []);
+      if (gwDocs.length) v.gwDocs = gwDocs;
       if (ex) {
         if (!["draft", "rejected"].includes(ex.status)) throw new HttpError(409, "결재 중이거나 승인된 전표는 수정할 수 없습니다. (결재 중이면 [회수] 후 수정)");
         if (me.role !== "admin" && ex.created_by !== me.id) throw new HttpError(403, "본인이 작성한 전표만 수정할 수 있습니다.");

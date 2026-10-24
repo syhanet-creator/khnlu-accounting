@@ -1,4 +1,4 @@
-// 인증 API: /api/auth/{status|login|logout|me|password|bootstrap|keepalive}
+// 인증 API: /api/auth/{status|login|sso|logout|me|password|bootstrap|keepalive}
 const crypto = require("crypto");
 const { sql, run, audit } = require("../_lib/db");
 const { send, clientIp, getBody, guard } = require("../_lib/http");
@@ -46,6 +46,34 @@ const handlers = {
   },
 
   // 최초 설정(첫 시스템관리자 만들기)이 필요한지
+  // 그룹웨어에서 넘어온 로그인(1회용 티켓, 2분 유효): /api/auth/sso?t=...
+  // 티켓은 그룹웨어 DB 함수(acct_sso_ticket)가 로그인한 구성원에게만 발급하며, 한 번 쓰면 폐기된다. 연결된 회계 계정으로만 로그인된다.
+  async sso(req, res) {
+    if (!guard(req, res, ["GET"])) return;
+    const to = code => { res.setHeader("Cache-Control", "no-store"); res.writeHead(302, { Location: code ? "/?sso=" + code : "/" }); res.end(); };
+    const t = String((req.query && req.query.t) || "");
+    if (!/^[0-9a-f]{64}$/.test(t)) return to("invalid");
+    const ip = clientIp(req);
+    if (await ipTooManyFails(ip)) return to("busy");
+    const h = crypto.createHash("sha256").update(t).digest("hex");
+    let tk;
+    try {
+      tk = (await run("UPDATE dbo.gw_sso_tickets SET used_at = now() WHERE token_hash = @h AND used_at IS NULL AND expires_at > now() RETURNING gw_user_id", { h: [sql.Char(64), h] })).recordset[0];
+    } catch (e) { if (e && e.code === "42P01") return to("setup"); throw e; }
+    if (!tk) { await audit({ action: "login_fail", detail: "sso bad ticket", ip }); return to("expired"); }
+    const r = await run(
+      `SELECT u.id, u.org_id, u.login_id, (u.is_active AND (u.org_id IS NULL OR o.is_active)) AS is_active, (u.locked_until IS NOT NULL AND u.locked_until > now()) AS locked
+       FROM dbo.gw_user_link l JOIN dbo.users u ON u.id = l.acct_user_id LEFT JOIN dbo.organizations o ON o.id = u.org_id WHERE l.gw_user_id = @g::uuid`,
+      { g: [sql.NVarChar(40), tk.gw_user_id] });
+    const user = r.recordset[0];
+    if (!user || !user.is_active || user.locked) { await audit({ action: "login_fail", detail: "sso " + (user ? "inactive" : "no link"), ip }); return to("nolink"); }
+    await run("UPDATE dbo.users SET failed_attempts = 0, last_login_at = now() WHERE id = @id", { id: [sql.Int, user.id] });
+    await run("DELETE FROM dbo.sessions WHERE user_id = @id AND expires_at < now()", { id: [sql.Int, user.id] });
+    await createSession(res, user.id, req);
+    await audit({ orgId: user.org_id, userId: user.id, loginId: user.login_id, action: "login", detail: "그룹웨어 로그인 통합", ip });
+    to("");
+  },
+
   async status(req, res) {
     if (!guard(req, res, ["GET"])) return;
     const needsBootstrap = !!process.env.BOOTSTRAP_TOKEN && (await userCount()) === 0;
