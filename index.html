@@ -6,7 +6,7 @@
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="default">
-<meta name="theme-color" content="#ffffff">
+<meta name="theme-color" content="#003890">
 <script>try{var __t=localStorage.getItem("khnp_theme");if(__t==="dark"||__t==="light"){document.documentElement.setAttribute("data-theme",__t);}}catch(e){}</script>
 <link rel="preconnect" href="https://cdn.jsdelivr.net" crossorigin>
 <link rel="stylesheet" crossorigin="anonymous" integrity="sha384-2nNKoOPayicGa+aRguOQuiZP+RqQ4G3jalfDeOgftkKD7zBM2gJXTwcFqCZltdv0" href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/variable/pretendardvariable-dynamic-subset.css">
@@ -348,68 +348,68 @@ var o=[];var l=Array.isArray(e);for(f=n.s.c;f<=n.e.c;++f)s[f]=ya(f);for(var c=n.
 :root {
   color-scheme: light;
   --bg: #ffffff;
-  --bg-sidebar: #f9f9f9;
+  --bg-sidebar: #f3f6fb;
   --surface: #ffffff;
   --surface-2: #f7f7f8;
-  --hover: #ececec;
-  --hover-soft: #f4f4f5;
-  --border: #e5e5e5;
-  --border-soft: #efefef;
-  --border-strong: #d4d4d8;
-  --text: #0d0d0d;
-  --text-soft: #5d5d5d;
-  --text-faint: #8e8e93;
-  --primary: #0d0d0d;
+  --hover: #e4ebf7;
+  --hover-soft: #eff3fa;
+  --border: #dbe1ec;
+  --border-soft: #e6ebf3;
+  --border-strong: #c3cddf;
+  --text: #121a2e;
+  --text-soft: #5a6479;
+  --text-faint: #8691a6;
+  --primary: #003890;
   --primary-text: #ffffff;
-  --primary-hover: #333333;
-  --accent: #10a37f;
-  --ring: rgba(13, 13, 13, 0.10);
-  --info: #2563eb;
-  --ok: #0f9d74;
+  --primary-hover: #002a6e;
+  --accent: #009840;
+  --ring: rgba(0, 56, 144, 0.18);
+  --info: #0b4fb3;
+  --ok: #00833a;
   --warn: #d97706;
   --danger: #dc2626;
-  --ok-bg: #e6f6f0;   --ok-fg: #0b7a5b;
+  --ok-bg: #e2f4ea;   --ok-fg: #00693a;
   --warn-bg: #fef3c7; --warn-fg: #92400e;
   --danger-bg: #fee2e2; --danger-fg: #b91c1c;
-  --info-bg: #e0ecff; --info-fg: #1d4ed8;
-  --muted-bg: #f0f0f1; --muted-fg: #5d5d5d;
+  --info-bg: #e3ecfa; --info-fg: #0b4fb3;
+  --muted-bg: #edf0f6; --muted-fg: #5a6479;
   --overlay: rgba(0, 0, 0, 0.42);
   --shadow-pop: 0 12px 36px rgba(0, 0, 0, 0.14);
   /* 예전 변수 이름 호환 */
   --ink: var(--text); --ink-soft: var(--text-soft); --paper: var(--bg); --paper-line: var(--border);
-  --navy: var(--text); --navy-light: var(--primary-hover); --debit: var(--info); --credit: var(--danger);
+  --navy: #202878; --navy-light: var(--primary-hover); --debit: var(--info); --credit: var(--danger);
   --radius: 12px;
 }
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]) {
     color-scheme: dark;
-    --bg: #212121; --bg-sidebar: #171717; --surface: #272727; --surface-2: #2f2f2f;
-    --hover: #2f2f2f; --hover-soft: #2b2b2b; --border: #383838; --border-soft: #303030; --border-strong: #4a4a4a;
-    --text: #ececec; --text-soft: #b4b4b4; --text-faint: #8a8a8a;
-    --primary: #ffffff; --primary-text: #0d0d0d; --primary-hover: #e4e4e4;
-    --accent: #19c37d; --ring: rgba(255, 255, 255, 0.14);
-    --info: #6ea8ff; --ok: #34d399; --warn: #fbbf24; --danger: #f87171;
+    --bg: #0d1424; --bg-sidebar: #09101e; --surface: #131c30; --surface-2: #19243c;
+    --hover: #1b2742; --hover-soft: #162036; --border: #26324d; --border-soft: #1f2a42; --border-strong: #38476a;
+    --text: #e7ebf5; --text-soft: #a6b1c7; --text-faint: #7d89a1;
+    --primary: #6f9cff; --primary-text: #08112a; --primary-hover: #93b4ff;
+    --accent: #2ed47a; --ring: rgba(111, 156, 255, 0.28);
+    --info: #8db3ff; --ok: #3ccf7a; --warn: #fbbf24; --danger: #f87171;
     --ok-bg: rgba(52, 211, 153, 0.16); --ok-fg: #6ee7b7;
     --warn-bg: rgba(251, 191, 36, 0.16); --warn-fg: #fcd34d;
     --danger-bg: rgba(248, 113, 113, 0.16); --danger-fg: #fca5a5;
     --info-bg: rgba(110, 168, 255, 0.18); --info-fg: #a5c8ff;
-    --muted-bg: #333333; --muted-fg: #b4b4b4;
+    --muted-bg: #1d2840; --muted-fg: #a6b1c7;
     --overlay: rgba(0, 0, 0, 0.6); --shadow-pop: 0 12px 36px rgba(0, 0, 0, 0.5);
   }
 }
 :root[data-theme="dark"] {
   color-scheme: dark;
-  --bg: #212121; --bg-sidebar: #171717; --surface: #272727; --surface-2: #2f2f2f;
-  --hover: #2f2f2f; --hover-soft: #2b2b2b; --border: #383838; --border-soft: #303030; --border-strong: #4a4a4a;
-  --text: #ececec; --text-soft: #b4b4b4; --text-faint: #8a8a8a;
-  --primary: #ffffff; --primary-text: #0d0d0d; --primary-hover: #e4e4e4;
-  --accent: #19c37d; --ring: rgba(255, 255, 255, 0.14);
-  --info: #6ea8ff; --ok: #34d399; --warn: #fbbf24; --danger: #f87171;
+  --bg: #0d1424; --bg-sidebar: #09101e; --surface: #131c30; --surface-2: #19243c;
+  --hover: #1b2742; --hover-soft: #162036; --border: #26324d; --border-soft: #1f2a42; --border-strong: #38476a;
+  --text: #e7ebf5; --text-soft: #a6b1c7; --text-faint: #7d89a1;
+  --primary: #6f9cff; --primary-text: #08112a; --primary-hover: #93b4ff;
+  --accent: #2ed47a; --ring: rgba(111, 156, 255, 0.28);
+  --info: #8db3ff; --ok: #3ccf7a; --warn: #fbbf24; --danger: #f87171;
   --ok-bg: rgba(52, 211, 153, 0.16); --ok-fg: #6ee7b7;
   --warn-bg: rgba(251, 191, 36, 0.16); --warn-fg: #fcd34d;
   --danger-bg: rgba(248, 113, 113, 0.16); --danger-fg: #fca5a5;
   --info-bg: rgba(110, 168, 255, 0.18); --info-fg: #a5c8ff;
-  --muted-bg: #333333; --muted-fg: #b4b4b4;
+  --muted-bg: #1d2840; --muted-fg: #a6b1c7;
   --overlay: rgba(0, 0, 0, 0.6); --shadow-pop: 0 12px 36px rgba(0, 0, 0, 0.5);
 }
 
@@ -707,6 +707,20 @@ select.kinput {
 .org-choice.selected { border-color: var(--text); box-shadow: 0 0 0 3px var(--ring); background: var(--surface-2); }
 .org-choice-title { font-size: 16px; font-weight: 650; margin-bottom: 6px; }
 .org-choice-desc { font-size: 12px; color: var(--text-soft); line-height: 1.5; }
+
+
+/* ===== 한수원노동조합 CI 테마 (파랑 #003890 · 초록 #009840) ===== */
+.brand-emblem { width: 38px; height: 38px; flex-shrink: 0; display: block; background: #fff; border-radius: 50%; }
+.auth-ci { display: block; width: min(300px, 82%); height: auto; margin: 0 auto 20px; }
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) .auth-ci { background: #fff; padding: 10px 16px; border-radius: 12px; box-sizing: content-box; } }
+:root[data-theme="dark"] .auth-ci { background: #fff; padding: 10px 16px; border-radius: 12px; box-sizing: content-box; }
+.onboarding-card { border-top: 4px solid #003890; }
+/* 로고의 파랑·초록 분할을 줄인 띠 */
+.sidebar::before { content: ''; display: block; height: 4px; margin: -1px -1px 12px; background: linear-gradient(103deg, #003890 0 80%, #009840 80.2% 100%); border-radius: 2px; }
+.topbar { box-shadow: inset 0 -3px 0 transparent; border-bottom: 1px solid var(--border); }
+.nav-item.active { background: var(--hover); color: var(--primary); box-shadow: inset 3px 0 0 #009840; }
+.nav-item.active svg { color: var(--primary); }
+.kbtn-primary:focus-visible, .nav-item:focus-visible, .kinput:focus-visible { outline: 2px solid #009840; outline-offset: 2px; }
 
 @media print {
   :root, :root[data-theme="dark"] {
@@ -3474,7 +3488,7 @@ function applyThemeMode(mode) {
   const root = document.documentElement;
   if (mode === "system") root.removeAttribute("data-theme"); else root.setAttribute("data-theme", mode);
   const m = document.querySelector('meta[name="theme-color"]');
-  if (m) m.setAttribute("content", isDarkNow(mode) ? "#212121" : "#ffffff");
+  if (m) m.setAttribute("content", isDarkNow(mode) ? "#0d1424" : "#003890");
 }
 function setThemeMode(mode) {
   try { if (mode === "system") localStorage.removeItem(THEME_KEY); else localStorage.setItem(THEME_KEY, mode); } catch (e) {}
@@ -3848,7 +3862,7 @@ function AccountMenu({ user, placement, onPassword, onSignature, onLogout }) {
 function AuthShell({ title, children, note }) {
   return React.createElement("div", { className: "onboarding-wrap" },
     React.createElement("div", { className: "onboarding-card" },
-      React.createElement("div", { className: "auth-logo" }, "회계"),
+      React.createElement("img", { className: "auth-ci", src: "/brand/ci_kor.png", alt: "한국수력원자력노동조합" }),
       React.createElement("h2", null, title),
       note && React.createElement("p", { className: "note-text" }, note),
       children
@@ -4675,7 +4689,7 @@ function MainApp({ authUser, onLogout, initialData }) {
   return React.createElement("div", { className: "app-shell" + (isMobile ? " is-mobile" : "") },
     !isMobile && React.createElement("aside", { className: "sidebar" },
       React.createElement("div", { className: "sidebar-brand" },
-        React.createElement("div", { className: "brand-mark" }, "회계"),
+        React.createElement("img", { className: "brand-emblem", src: "/brand/emblem.png", alt: "한국수력원자력노동조합" }),
         React.createElement("div", { className: "brand-text" },
           React.createElement("div", { className: "org-name", title: data.orgName || data.org }, data.orgName || data.org),
           React.createElement("div", { className: "app-name" }, `${orgTypeLabel(data.orgType)}용 · ${data.currentFY}회계연도`)
