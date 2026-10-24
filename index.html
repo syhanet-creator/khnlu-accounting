@@ -2410,14 +2410,8 @@ async function rasterizeToJpeg(bytes, mime) {
 
 const A4_W = 595.28, A4_H = 841.89;
 
-async function buildPrintPackage(voucher, data, onProgress) {
-  await loadPrintLibs();
-  const { PDFDocument } = window.PDFLib;
-  const pdf = await PDFDocument.create();
-
-  // 1) 결의서 본문 (길면 여러 쪽으로 자른다)
-  if (onProgress) onProgress("결의서 만드는 중...");
-  const node = buildVoucherPrintNode(voucher, data);
+// 인쇄용 화면 하나를 A4 쪽으로 잘라 PDF에 붙인다(길면 여러 쪽).
+async function addNodePages(pdf, node) {
   document.body.appendChild(node);
   let canvas;
   try {
@@ -2434,38 +2428,119 @@ async function buildPrintPackage(voucher, data, onProgress) {
     const page = pdf.addPage([A4_W, A4_H]);
     page.drawImage(img, { x: 0, y: A4_H - h * (A4_W / canvas.width), width: A4_W, height: h * (A4_W / canvas.width) });
   }
+}
+
+// PDF는 쪽을 그대로 이어 붙이고, 사진은 한 쪽에 한 장씩 맞춰 넣는다. 합칠 수 없는 형식이면 false.
+async function addFileToPdf(pdf, bytes, ext, PDFDocument) {
+  if (ext === "pdf") {
+    const src = await PDFDocument.load(bytes, { ignoreEncryption: true });
+    const pages = await pdf.copyPages(src, src.getPageIndices());
+    pages.forEach(p => pdf.addPage(p));
+    return true;
+  }
+  if (["jpg", "jpeg", "png", "webp"].includes(ext)) {
+    const mime = ext === "png" ? "image/png" : ext === "webp" ? "image/webp" : "image/jpeg";
+    const im = await rasterizeToJpeg(bytes, mime);
+    const landscape = im.width > im.height * 1.1;
+    const pw = landscape ? A4_H : A4_W, ph = landscape ? A4_W : A4_H, m = 28;
+    const k = Math.min((pw - 2 * m) / im.width, (ph - 2 * m) / im.height);
+    const w = im.width * k, h = im.height * k;
+    const page = pdf.addPage([pw, ph]);
+    page.drawImage(await pdf.embedJpg(im.dataUrl), { x: (pw - w) / 2, y: (ph - h) / 2, width: w, height: h });
+    return true;
+  }
+  return false;
+}
+
+// 그룹웨어 문서 한 건(본문 + 결재 이력)을 인쇄용 화면으로 그린다.
+function buildGwDocPrintNode(d, data) {
+  const el = (tag, style, text) => { const n = document.createElement(tag); if (style) n.setAttribute("style", style); if (text !== undefined && text !== null) n.textContent = text; return n; };
+  const B = "border:1px solid #333;";
+  const root = el("div", "position:fixed;left:-10000px;top:0;width:794px;box-sizing:border-box;padding:44px 48px;background:#fff;color:#111;font-family:'Malgun Gothic','Noto Sans KR',sans-serif;font-size:13px;line-height:1.5;");
+  root.appendChild(el("div", "font-size:11px;color:#777;margin-bottom:6px;", "첨부 — 그룹웨어 문서"));
+  root.appendChild(el("div", "text-align:center;font-size:22px;font-weight:700;margin:4px 0 12px;", d.title || ""));
+  const meta = el("table", "border-collapse:collapse;width:100%;margin-bottom:12px;");
+  const lab = "background:#f1efe7;font-weight:700;width:86px;" + B + "padding:5px 8px;";
+  const val = B + "padding:5px 8px;";
+  const row = (pairs) => { const tr = el("tr"); pairs.forEach(([l, t, span]) => { tr.appendChild(el("td", lab, l)); const td = el("td", val, t); if (span) td.setAttribute("colspan", String(span)); tr.appendChild(td); }); meta.appendChild(tr); };
+  row([["문서번호", d.docNo || "(번호 없음)"], ["작성(완료)일", d.date || ""]]);
+  row([["작성 조직", d.orgName || ""], ["기안자", d.author || ""]]);
+  if (d.recipient) row([["수신", d.recipient, 3]]);
+  if (d.cc) row([["참조", d.cc, 3]]);
+  root.appendChild(meta);
+  const body = el("div", B + "padding:12px 14px;min-height:140px;white-space:pre-wrap;word-break:break-word;margin-bottom:14px;");
+  body.textContent = d.body || "(내용 없음)";
+  root.appendChild(body);
+  if ((d.steps || []).length) {
+    root.appendChild(el("div", "font-weight:700;margin:6px 0;", "결재 이력"));
+    const t = el("table", "border-collapse:collapse;width:100%;");
+    const hr = el("tr");
+    ["단계", "결재자", "처리", "일자", "의견"].forEach(h => hr.appendChild(el("th", B + "padding:4px 6px;background:#f1efe7;", h)));
+    t.appendChild(hr);
+    d.steps.forEach(s => {
+      const tr = el("tr");
+      const who = s.proxy && s.actor && s.actor !== s.approver ? `${s.actor} (대결: ${s.approver})` : (s.actor || s.approver);
+      [s.label, who, { approved: "승인", rejected: "반려", waiting: "대기" }[s.status] || s.status, s.at, s.comment].forEach(x => tr.appendChild(el("td", B + "padding:4px 6px;", x || "")));
+      t.appendChild(tr);
+    });
+    root.appendChild(t);
+  }
+  root.appendChild(el("div", "margin-top:14px;font-size:11px;color:#777;text-align:right;", `그룹웨어 문서 · 출력일시 ${new Date().toLocaleString("ko-KR")}`));
+  return root;
+}
+
+async function buildPrintPackage(voucher, data, onProgress) {
+  await loadPrintLibs();
+  const { PDFDocument } = window.PDFLib;
+  const pdf = await PDFDocument.create();
+
+  // 1) 결의서 본문 (길면 여러 쪽으로 자른다)
+  if (onProgress) onProgress("결의서 만드는 중...");
+  await addNodePages(pdf, buildVoucherPrintNode(voucher, data));
+
+  // 1-2) 연결한 그룹웨어 문서: 본문·결재 이력 쪽 + 문서에 첨부된 PDF·사진
+  const skipped = [];
+  const gwIds = (voucher.gwDocs || []).map(d => d.id).filter(Boolean);
+  let gwIncluded = 0;
+  if (gwIds.length) {
+    if (onProgress) onProgress("그룹웨어 문서 불러오는 중...");
+    const pk = await apiRetrying("gw/package", { method: "POST", body: { ids: gwIds } });
+    const docs = (pk && pk.docs) || [];
+    for (const d of gwIds.filter(id => !docs.some(x => x.id === id))) {
+      const meta = (voucher.gwDocs || []).find(x => x.id === d);
+      skipped.push(`그룹웨어 문서 ${meta ? (meta.docNo || meta.title) : d} (연결할 수 없는 문서)`);
+    }
+    for (let i = 0; i < docs.length; i++) {
+      const d = docs[i];
+      if (onProgress) onProgress(`그룹웨어 문서 ${i + 1}/${docs.length} 합치는 중...`);
+      await addNodePages(pdf, buildGwDocPrintNode(d, data));
+      gwIncluded++;
+      for (const f of d.files || []) {
+        try {
+          if (!f.url) throw new Error("no url");
+          const res = await fetch(f.url);
+          if (!res.ok) throw new Error(String(res.status));
+          await addFileToPdf(pdf, new Uint8Array(await res.arrayBuffer()), (f.name.split(".").pop() || "").toLowerCase(), PDFDocument) || skipped.push(`${f.name} (그룹웨어 문서 ${d.docNo || d.title})`);
+        } catch (e) { skipped.push(`${f.name} (그룹웨어 문서 ${d.docNo || d.title})`); }
+      }
+    }
+  }
 
   // 2) 증빙: PDF는 쪽을 그대로 이어 붙이고, 사진은 한 쪽에 한 장씩 맞춰 넣는다
   const items = (voucher.attachments || []).filter(a => a.blob);
-  const skipped = [];
   for (let i = 0; i < items.length; i++) {
     const a = items[i];
     if (onProgress) onProgress(`증빙 ${i + 1}/${items.length} 합치는 중...`);
     const ext = (a.blob.split(".").pop() || "").toLowerCase();
     try {
       const bytes = await fetchAttachmentBytes(a);
-      if (ext === "pdf") {
-        const src = await PDFDocument.load(bytes, { ignoreEncryption: true });
-        const pages = await pdf.copyPages(src, src.getPageIndices());
-        pages.forEach(p => pdf.addPage(p));
-      } else if (["jpg", "jpeg", "png", "webp"].includes(ext)) {
-        const mime = ext === "png" ? "image/png" : ext === "webp" ? "image/webp" : "image/jpeg";
-        const im = await rasterizeToJpeg(bytes, mime);
-        const landscape = im.width > im.height * 1.1;
-        const pw = landscape ? A4_H : A4_W, ph = landscape ? A4_W : A4_H, m = 28;
-        const k = Math.min((pw - 2 * m) / im.width, (ph - 2 * m) / im.height);
-        const w = im.width * k, h = im.height * k;
-        const page = pdf.addPage([pw, ph]);
-        page.drawImage(await pdf.embedJpg(im.dataUrl), { x: (pw - w) / 2, y: (ph - h) / 2, width: w, height: h });
-      } else {
-        skipped.push(a.name);
-      }
+      if (!(await addFileToPdf(pdf, bytes, ext, PDFDocument))) skipped.push(a.name);
     } catch (e) {
       skipped.push(a.name);
     }
   }
   pdf.setTitle(`${voucher.docNo || "회계결의서"} (증빙 포함)`);
-  return { bytes: await pdf.save(), skipped, included: items.length - skipped.length };
+  return { bytes: await pdf.save(), skipped, included: items.length, gwIncluded };
 }
 
 // 만든 PDF를 연다. PC 프로그램(EXE 서버판 2.1 이상)은 기본 PDF 프로그램으로, 브라우저·앱은 새 탭으로 열린다.
@@ -2501,6 +2576,7 @@ function VoucherPrintActions({ voucher, data, onCancel, onSave, balanced, readOn
     else onSave({ ...voucher, status: "pending" });
   }
   const blobAttachments = attachments.filter(a => a.blob);
+  const gwDocCount = (voucher.gwDocs || []).length;
 
   // 결의서 + 서버에 저장된 증빙을 하나의 PDF로 합쳐 연다
   async function printPackage() {
@@ -2545,10 +2621,10 @@ function VoucherPrintActions({ voucher, data, onCancel, onSave, balanced, readOn
   return React.createElement("div", { className: "voucher-actions" },
     React.createElement(Btn, { variant: "ghost", onClick: onCancel }, readOnly ? "닫기" : "취소"),
     React.createElement(Btn, { variant: "outline", icon: "print", onClick: printOnly }, "인쇄(서명용)"),
-    blobAttachments.length > 0 && React.createElement(Btn, {
+    (blobAttachments.length + gwDocCount) > 0 && React.createElement(Btn, {
       variant: "outline", icon: "print", disabled: !!pkgBusy, onClick: printPackage,
-      title: "결의서와 첨부 증빙(PDF·사진)을 하나의 PDF로 합쳐 엽니다. 열린 PDF를 인쇄하세요."
-    }, pkgBusy || `증빙 포함 일괄인쇄 (${blobAttachments.length})`),
+      title: "결의서와 연결한 그룹웨어 문서, 첨부 증빙(PDF·사진)을 하나의 PDF로 합쳐 엽니다. 열린 PDF를 인쇄하세요."
+    }, pkgBusy || `증빙 포함 일괄인쇄 (${blobAttachments.length + gwDocCount})`),
     hasDesktopApi() && attachments.some(a => a.path) && React.createElement(Btn, {
       variant: "outline", icon: "print", onClick: printWithAttachments
     }, `증빙 포함 일괄인쇄 (${attachments.filter(a => a.path).length})`),

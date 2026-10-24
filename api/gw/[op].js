@@ -2,6 +2,7 @@
 const { send, guard } = require("../_lib/http");
 const { getSessionUser } = require("../_lib/session");
 const gw = require("../_lib/gw");
+const { getBody } = require("../_lib/http");
 
 const handlers = {
   // 연동 여부와 그룹웨어 주소
@@ -17,6 +18,14 @@ const handlers = {
     const me = await getSessionUser(req);
     if (!me || !me.orgId) return send(res, 401, { error: "로그인이 필요합니다." });
     send(res, 200, { docs: await gw.listDocs(me.orgId, req.query && req.query.q), gwUrl: gw.GW_URL });
+  },
+  // 증빙 포함 PDF 용 연결 문서 묶음(본문·결재 이력·첨부 임시 주소)
+  async package(req, res) {
+    if (!guard(req, res, ["POST"])) return;
+    const me = await getSessionUser(req);
+    if (!me || !me.orgId) return send(res, 401, { error: "로그인이 필요합니다." });
+    const b = getBody(req) || {};
+    send(res, 200, { docs: await gw.packageDocs(me.orgId, b.ids) });
   },
 };
 

@@ -3,6 +3,7 @@
 // 연결 가능한 문서: 결재가 끝난 것(approved)·시행(sent) 문서 중 비공개가 아닌 것.
 const { sql, run } = require("./db");
 const { HttpError } = require("./http");
+const blob = require("./blob");
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const GW_URL = (process.env.GW_URL || "https://khnlu-groupware.vercel.app").replace(/\/$/, "");
@@ -56,4 +57,42 @@ async function verifyDocs(orgId, input, keep) {
   return out;
 }
 
-module.exports = { GW_URL, linked, listDocs, verifyDocs };
+// 증빙 포함 PDF 용: 연결 문서의 본문·결재 이력·첨부파일(5분짜리 임시 주소)을 돌려준다. 연결 가능한 문서만(조직 범위·결재 완료·비공개 아님).
+const GW_BUCKET = () => process.env.SUPABASE_GW_BUCKET || "gw-files";
+async function packageDocs(orgId, input) {
+  const ids = [...new Set((Array.isArray(input) ? input : []).filter(id => typeof id === "string" && UUID_RE.test(id)))].slice(0, 10);
+  const out = [];
+  for (const id of ids) {
+    let d, steps;
+    try {
+      const r = await run(
+        `SELECT ${COLS}, d.recipient, d.cc, d.body, d.attachments ${FROM} WHERE d.id = @id::uuid AND ${ORG_SCOPE} AND ${OK}`,
+        { id: [sql.NVarChar(40), id], org: [sql.Int, orgId] });
+      d = r.recordset[0];
+      if (!d) continue;
+      const s = await run(
+        `SELECT st.step_no, st.label, st.status, st.is_proxy, st.acted_at, st.comment, ap.display_name AS approver, ab.display_name AS actor
+         FROM public.gw_steps st LEFT JOIN public.gw_members ap ON ap.user_id = st.approver_id LEFT JOIN public.gw_members ab ON ab.user_id = st.acted_by
+         WHERE st.ref_type = 'document' AND st.ref_id = @id::uuid ORDER BY st.step_no`,
+        { id: [sql.NVarChar(40), id] });
+      steps = s.recordset;
+    } catch (e) { throw wrap(e); }
+    const files = [];
+    for (const a of Array.isArray(d.attachments) ? d.attachments : []) {
+      if (!a || typeof a.path !== "string" || !a.path) continue;
+      try { files.push({ name: String(a.name || "첨부파일"), path: a.path, url: await blob.signedDownloadUrl(a.path, 5, { bucket: GW_BUCKET() }) }); }
+      catch (e) { files.push({ name: String(a.name || "첨부파일"), path: a.path, url: null }); }
+    }
+    out.push({
+      ...view(d), recipient: d.recipient || "", cc: d.cc || "", body: d.body || "",
+      steps: steps.map(x => ({
+        label: x.label, status: x.status, approver: x.approver || "", actor: x.actor || "", proxy: !!x.is_proxy,
+        at: x.acted_at ? new Date(x.acted_at).toISOString().slice(0, 10) : "", comment: x.comment || "",
+      })),
+      files,
+    });
+  }
+  return out;
+}
+
+module.exports = { GW_URL, linked, listDocs, verifyDocs, packageDocs };
